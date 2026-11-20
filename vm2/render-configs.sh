@@ -1,3 +1,4 @@
+# vm2/render-configs.sh
 #!/usr/bin/env bash
 # ==============================================================================
 # render-configs.sh — Рендеринг конфигурационных файлов для ВМ №2
@@ -12,9 +13,8 @@
 #   3. Запустите стек: docker compose up -d
 #
 # Результат: Создаёт директорию rendered/ с готовыми конфигами.
-#            docker-compose.yml должен монтировать файлы из rendered/, а не оригиналы.
+#            docker-compose.yml монтирует файлы из rendered/, а не оригиналы.
 # ==============================================================================
-
 set -euo pipefail
 
 # ==============================================================================
@@ -32,19 +32,17 @@ FILES_TO_RENDER=(
 )
 
 # Обязательные переменные (проверка перед рендерингом)
+# Единые S3-ключи для всех клиентов SeaweedFS (Langfuse, Worker, backups)
 REQUIRED_VARS=(
     "REDIS_FACTORY_PASSWORD"
     "REDIS_FACTORY_ACL_PASSWORD"
     "S3_ACCESS_KEY"
     "S3_SECRET_KEY"
-    "S3_FACTORY_ACCESS_KEY"
-    "S3_FACTORY_SECRET_KEY"
 )
 
 # ==============================================================================
 # ФУНКЦИИ
 # ==============================================================================
-
 log_info() {
     echo "[INFO] $1"
 }
@@ -64,9 +62,7 @@ load_env() {
         log_error "Скопируйте .env.example в .env и заполните значения"
         exit 1
     fi
-
     log_info "Загрузка переменных из $ENV_FILE"
-
     # Экспортируем все переменные из .env (кроме комментариев и пустых строк)
     set -a
     source "$ENV_FILE"
@@ -76,15 +72,12 @@ load_env() {
 # Проверка наличия обязательных переменных
 check_required_vars() {
     log_info "Проверка обязательных переменных..."
-
     local missing_vars=()
-
     for var in "${REQUIRED_VARS[@]}"; do
         if [[ -z "${!var:-}" ]]; then
             missing_vars+=("$var")
         fi
     done
-
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         log_error "Отсутствуют обязательные переменные в .env:"
         for var in "${missing_vars[@]}"; do
@@ -92,7 +85,6 @@ check_required_vars() {
         done
         exit 1
     fi
-
     log_success "Все обязательные переменные установлены"
 }
 
@@ -105,8 +97,22 @@ check_envsubst() {
         log_error "  macOS: brew install gettext"
         exit 1
     fi
-
     log_success "envsubst найден: $(command -v envsubst)"
+}
+
+# Определение инструмента для очистки _*-ключей из JSON
+detect_json_tool() {
+    if command -v python3 &>/dev/null; then
+        echo "python3"
+    elif command -v jq &>/dev/null; then
+        echo "jq"
+    else
+        log_error "Не найден инструмент для обработки JSON (python3 или jq)."
+        log_error "Установите один из них:"
+        log_error "  python3: sudo apt-get install python3"
+        log_error "  jq:      sudo apt-get install jq"
+        exit 1
+    fi
 }
 
 # Рендеринг одного файла
@@ -128,8 +134,61 @@ render_file() {
     # Рендеринг через envsubst
     # ${VAR} заменяется на значение переменной окружения
     envsubst < "$src_path" > "$dst_path"
-
     log_success "Отрендерен: $src_file -> rendered/$src_file"
+}
+
+# Очистка служебных _*-ключей из JSON-файлов
+clean_json_metadata() {
+    local json_file="$1"
+    local json_tool
+    json_tool="$(detect_json_tool)"
+
+    if [[ ! -f "$json_file" ]]; then
+        log_error "JSON-файл не найден: $json_file"
+        return 1
+    fi
+
+    # Проверяем, является ли файл JSON
+    if [[ "$json_file" != *.json ]]; then
+        return 0
+    fi
+
+    log_info "Очистка служебных _*-ключей из $(basename "$json_file") (${json_tool})..."
+
+    if [[ "$json_tool" == "python3" ]]; then
+        python3 -c "
+import json, sys
+def clean(obj):
+    if isinstance(obj, dict):
+        return {
+            k: clean(v)
+            for k, v in obj.items()
+            if not k.startswith('_')
+        }
+    if isinstance(obj, list):
+        return [clean(item) for item in obj]
+    return obj
+data = json.load(open(sys.argv[1]))
+print(json.dumps(clean(data), ensure_ascii=False, indent=2))
+" "$json_file" > "${json_file}.tmp" && mv "${json_file}.tmp" "$json_file"
+    else
+        # jq: рекурсивно удаляем все ключи, начинающиеся с "_"
+        jq 'walk(
+            if type == "object"
+            then with_entries(select(.key | startswith("_") | not))
+            else .
+            end
+        )' "$json_file" > "${json_file}.tmp" && mv "${json_file}.tmp" "$json_file"
+    fi
+
+    # Валидация результата
+    if [[ "$json_tool" == "python3" ]]; then
+        python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$json_file"
+    else
+        jq empty "$json_file"
+    fi
+
+    log_success "JSON очищен: $(basename "$json_file")"
 }
 
 # Очистка старых rendered файлов
@@ -138,50 +197,12 @@ clean_rendered() {
         log_info "Очистка старой директории rendered/"
         rm -rf "$RENDERED_DIR"
     fi
-
     mkdir -p "$RENDERED_DIR"
-}
-
-# Вывод инструкции по изменению docker-compose.yml
-print_compose_instructions() {
-    log_info ""
-    log_info "================================================================"
-    log_info "ВАЖНО: Измените docker-compose.yml для использования rendered файлов"
-    log_info "================================================================"
-    log_info ""
-    log_info "Замените монтирования конфигов:"
-    log_info ""
-    log_info "  redis-factory:"
-    log_info "    volumes:"
-    log_info "      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro"
-    log_info "      - ./redis/acl.conf:/usr/local/etc/redis/acl.conf:ro"
-    log_info ""
-    log_info "На:"
-    log_info ""
-    log_info "  redis-factory:"
-    log_info "    volumes:"
-    log_info "      - ./rendered/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro"
-    log_info "      - ./rendered/redis/acl.conf:/usr/local/etc/redis/acl.conf:ro"
-    log_info ""
-    log_info "И для seaweedfs-s3:"
-    log_info ""
-    log_info "  seaweedfs-s3:"
-    log_info "    volumes:"
-    log_info "      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro"
-    log_info ""
-    log_info "На:"
-    log_info ""
-    log_info "  seaweedfs-s3:"
-    log_info "    volumes:"
-    log_info "      - ./rendered/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro"
-    log_info ""
-    log_info "================================================================"
 }
 
 # ==============================================================================
 # ОСНОВНАЯ ЛОГИКА
 # ==============================================================================
-
 main() {
     log_info "Начало рендеринга конфигурационных файлов для ВМ №2"
     log_info "Директория проекта: $SCRIPT_DIR"
@@ -200,10 +221,8 @@ main() {
     # Рендеринг каждого файла
     log_info ""
     log_info "Рендеринг файлов..."
-
     local success_count=0
     local fail_count=0
-
     for file in "${FILES_TO_RENDER[@]}"; do
         if render_file "$file"; then
             ((success_count++))
@@ -212,18 +231,23 @@ main() {
         fi
     done
 
+    # Очистка _*-ключей из JSON-файлов
+    log_info ""
+    log_info "Очистка служебных _*-ключей из JSON..."
+    for file in "${FILES_TO_RENDER[@]}"; do
+        if [[ "$file" == *.json ]]; then
+            clean_json_metadata "${RENDERED_DIR}/${file}"
+        fi
+    done
+
     log_info ""
     log_info "================================================================"
     log_info "Результат: $success_count успешно, $fail_count ошибок"
     log_info "================================================================"
-
     if [[ $fail_count -gt 0 ]]; then
         log_error "Некоторые файлы не удалось отрендерить"
         exit 1
     fi
-
-    # Инструкция по docker-compose
-    print_compose_instructions
 
     log_success "Готово! Теперь можно запускать: docker compose up -d"
 }

@@ -22,9 +22,7 @@
 #   5. Задать VM1_HOST_IP и VM2_HOST_IP в .env.
 #
 # ==============================================================================
-
 name: factory-vm1
-
 services:
   # ============================================================================
   # INGRESS / SSE-PROXY
@@ -404,8 +402,8 @@ services:
       # Адрес ВМ №2 задаётся переменной VM2_HOST_IP в .env
       REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@${VM2_HOST_IP}:6379
       REDIS_FACTORY_TLS: "true"
-      # Схема postgresql:// (не asyncpg) — для psycopg_pool из Blueprint §3.1
-      POSTGRES_RUNTIME_URL: postgresql://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD}@${VM2_HOST_IP}:5432/factory
+      # Схема postgresql+ssl:// с sslmode=require — для TLS-подключения к ВМ №2 (Blueprint §3.1)
+      POSTGRES_RUNTIME_URL: postgresql+ssl://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD}@${VM2_HOST_IP}:5432/factory?sslmode=require
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse-web:3000
@@ -414,7 +412,7 @@ services:
       REQUESTS_CA_BUNDLE: /etc/ssl/certs/corp-ca.crt
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
-      # Монтирование корпоративного Root CA (исправлен путь, убрано дублирование certs/certs/)
+      # Монтирование корпоративного Root CA (принцип автономности §1.8)
       - ./certs/corp-ca.crt:/etc/ssl/certs/corp-ca.crt:ro
     depends_on:
       langfuse-web:

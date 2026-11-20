@@ -22,6 +22,7 @@ Production Blueprint v5.2 — ВМ №1
   - Идемпотентность resume по interrupt_id (среднее №2)
   - Cancel run через флаг в БД (среднее №3)
   - Реестр ранов с полным жизненным циклом статусов
+  - TLS для PostgreSQL runtime (Шаг 3): postgresql+ssl://...?sslmode=require
 """
 
 import asyncio
@@ -90,8 +91,8 @@ class Settings(BaseSettings):
     task_queue_name: str = "factory:tasks"
 
     # PostgreSQL runtime (ВМ №2) — для реестра ранов
-    # Схема postgresql:// (не asyncpg) — для psycopg_pool
-    postgres_runtime_url: str = "postgresql://factory_gateway:password@10.0.0.2:5432/factory"
+    # Схема postgresql+ssl:// с sslmode=require — для TLS-подключения (Blueprint §3.1)
+    postgres_runtime_url: str = "postgresql+ssl://factory_gateway:password@10.0.0.2:5432/factory?sslmode=require"
 
     # Langfuse
     langfuse_public_key: str = ""
@@ -198,6 +199,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # PostgreSQL connection pool (для реестра ранов)
     # Blueprint §3.1: autocommit=True, row_factory=dict_row, prepare_threshold=0
+    # TLS включён через схему postgresql+ssl:// и sslmode=require в URL
     app.state.pg_pool = AsyncConnectionPool(
         conninfo=settings.postgres_runtime_url,
         min_size=2,

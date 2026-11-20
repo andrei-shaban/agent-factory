@@ -1,3 +1,4 @@
+# vm2/docker-compose.yml
 # ==============================================================================
 # docker-compose.yml — ВМ №2: Вычисления, песочницы, данные агентов
 # Production Blueprint v5.2
@@ -6,8 +7,8 @@
 #
 # Состав:
 #   - Worker / LangGraph (единый Python-образ с Gateway, entrypoint: taskiq worker)
-#   - PostgreSQL / pgvector — Runtime & RAG
-#   - Redis — фабрика (очередь ранов + Streams)
+#   - PostgreSQL / pgvector — Runtime & RAG (TLS включён)
+#   - Redis — фабрика (очередь ранов + Streams, TLS включён)
 #   - SeaweedFS: master + volume + filer + S3-шлюз
 #   - Docker socket proxy — управление песочницами
 #
@@ -19,44 +20,44 @@
 #      (Redis не подставляет ${...} самостоятельно).
 #   2. Создать seaweedfs/filer.toml и seaweedfs/s3.json.
 #   3. Положить mTLS-материал в certs/ (corp-ca.crt, vm2-client.crt, vm2-client.key).
-#   4. Задать VM2_HOST_IP в .env — на этот IP публикуются порты для ВМ №1.
+#   4. Положить TLS-сертификаты PostgreSQL в certs/ (pg-server.crt, pg-server.key).
+#   5. Положить TLS-сертификаты Redis в certs/redis/ (redis.crt, redis.key, ca.crt).
+#   6. Задать VM2_HOST_IP в .env — на этот IP публикуются порты для ВМ №1.
 # ==============================================================================
-
 name: factory-vm2
 
 services:
   # ============================================================================
   # WORKER / LANGGRAPH
   # ============================================================================
+  # Единый образ с Gateway (factory/gateway:latest). Код Worker поставляется
+  # отдельно через bind-mount (принцип автономности артефактов, Blueprint §1.8).
+  # Worker подключается к Redis по TLS (rediss://) через Docker-сеть.
+  # ============================================================================
   worker:
     image: factory/gateway:latest
     container_name: vm2-worker
     restart: unless-stopped
-    entrypoint: ["taskiq", "worker", "app.broker:broker", "--fs-discover", "--tasks-module", "app.tasks"]
+    entrypoint: ["taskiq", "worker", "worker.app.broker:broker", "--fs-discover", "--tasks-module", "worker.app.tasks"]
     environment:
       ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-Asia/Yekaterinburg}
-
-      # Redis фабрики — локально, без TLS (минимизация round-trip при XADD)
-      REDIS_FACTORY_URL: redis://:${REDIS_FACTORY_PASSWORD}@redis-factory:6379
-      REDIS_FACTORY_TLS: "false"
-
-      # PostgreSQL Runtime — локально
+      # Redis фабрики — по TLS через Docker-сеть (порт 6379, TLS включён)
+      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@redis-factory:6379
+      REDIS_FACTORY_TLS: "true"
+      # PostgreSQL Runtime — локально (без TLS, внутри Docker-сети)
       POSTGRES_RUNTIME_URL: postgresql://${WORKER_DB_USER}:${WORKER_DB_PASSWORD}@postgres-runtime:5432/factory
-
       # Langfuse (ВМ №1)
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: ${LANGFUSE_HOST}
-
       # SeaweedFS S3 — локально
       SEAWEED_S3_ENDPOINT: http://seaweedfs-s3:8333
-      SEAWEED_S3_ACCESS_KEY: ${S3_FACTORY_ACCESS_KEY}
-      SEAWEED_S3_SECRET_KEY: ${S3_FACTORY_SECRET_KEY}
+      SEAWEED_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      SEAWEED_S3_SECRET_KEY: ${S3_SECRET_KEY}
       SEAWEED_S3_BUCKET_FACTORY: ${SEAWEED_S3_BUCKET_FACTORY:-factory-artifacts}
       SEAWEED_S3_BUCKET_BACKUPS: ${SEAWEED_S3_BUCKET_BACKUPS:-postgres-backups}
-
       # Управление песочницами через socket proxy (прямой docker.sock не монтируется)
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       SANDBOX_RUNTIME: runsc
@@ -65,37 +66,40 @@ services:
       SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-256}
       SANDBOX_TIMEOUT: ${SANDBOX_TIMEOUT:-300}
       WHEEL_CACHE_PATH: /app/wheel-cache
-
       # Внутреннее зеркало PyPI (ВМ №1)
       PYPI_MIRROR_URL: ${PYPI_MIRROR_URL}
-
       # GPU ендпоинты — mTLS
       GPU_ENDPOINT_URL: ${GPU_ENDPOINT_URL}
       GPU_CLIENT_CERT: /etc/certs/vm2-client.crt
       GPU_CLIENT_KEY: /etc/certs/vm2-client.key
       GPU_LLM_TIMEOUT: ${GPU_LLM_TIMEOUT:-600}
       GPU_OCR_TIMEOUT: ${GPU_OCR_TIMEOUT:-120}
-
       # Корпоративное хранилище данных (ВМ №4) — mTLS, read-only
       CORP_PG_URL: ${CORP_PG_URL}
-
       # Рабочая станция (Этап 2) — mTLS
       WORKSTATION_URL: ${WORKSTATION_URL}
-
       # Доверие корпоративному УЦ
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
-
       # Air-Gap: телеметрия отключена
       LANGSMITH_TRACING: "false"
       LANGCHAIN_TRACING_V2: "false"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     volumes:
+      # mTLS-сертификаты (монтируются из хостовой системы — принцип автономности)
       - ./certs/corp-ca.crt:/etc/certs/corp-ca.crt:ro
       - ./certs/vm2-client.crt:/etc/certs/vm2-client.crt:ro
       - ./certs/vm2-client.key:/etc/certs/vm2-client.key:ro
+      # Корпоративный Root CA для проверки TLS Redis (Worker подключается по rediss://)
+      - ./certs/redis/ca.crt:/etc/redis/tls/ca.crt:ro
+      # Код Worker (принцип автономности артефактов, Blueprint §1.8).
+      # Монтируется read-only в /app/worker. Python-импорты: worker.app.*
+      # WORKDIR контейнера = /app, поэтому worker.app.* доступен как пакет.
+      - ./worker:/app/worker:ro
+      # Wheel-cache для песочниц (общий именованный том)
       - wheel-cache:/app/wheel-cache
+      # Временная директория Worker (логи, кэш)
       - worker-tmp:/app/tmp
     depends_on:
       postgres-runtime:
@@ -124,14 +128,17 @@ services:
         max-file: "10"
 
   # ============================================================================
-  # POSTGRESQL / PGVECTOR — RUNTIME & RAG
+  # POSTGRESQL / PGVECTOR — RUNTIME & RAG (TLS включён)
+  # ============================================================================
+  # Blueprint §3.1: "TLS + scram-sha-256" для маршрута ВМ №1 → ВМ №2.
+  # TLS-сертификаты монтируются через volume (принцип автономности §1.8).
   # ============================================================================
   postgres-runtime:
     image: pgvector/pgvector:pg17
     container_name: vm2-postgres-runtime
     restart: unless-stopped
-    # Жёсткое лимитирование памяти и WAL-архивация задаются флагами:
-    # отдельный postgresql.conf не монтируется, чтобы не рассинхронизировать конфиг.
+    # Жёсткое лимитирование памяти и WAL-архивация задаются флагами.
+    # TLS включён для внешних подключений (с ВМ №1).
     command:
       - postgres
       - -c
@@ -154,15 +161,15 @@ services:
       - archive_command=test ! -f /var/lib/postgresql/wal-archive/%f && cp %p /var/lib/postgresql/wal-archive/%f
       - -c
       - archive_timeout=300
-      # TLS для маршрута ВМ №1 → ВМ №2. Включить после выдачи серверного сертификата:
-      # - -c
-      # - ssl=on
-      # - -c
-      # - ssl_cert_file=/etc/certs/pg-server.crt
-      # - -c
-      # - ssl_key_file=/etc/certs/pg-server.key
-      # - -c
-      # - ssl_ca_file=/etc/certs/corp-ca.crt
+      # TLS для маршрута ВМ №1 → ВМ №2 (Blueprint §3.1)
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/certs/pg-server.crt
+      - -c
+      - ssl_key_file=/etc/certs/pg-server.key
+      - -c
+      - ssl_ca_file=/etc/certs/corp-ca.crt
     environment:
       POSTGRES_USER: ${POSTGRES_RUNTIME_USER}
       POSTGRES_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD}
@@ -178,6 +185,10 @@ services:
       - ./init-db/02-enable-extensions.sql:/docker-entrypoint-initdb.d/02-enable-extensions.sql:ro
       - ./init-db/03-create-tables.sql:/docker-entrypoint-initdb.d/03-create-tables.sql:ro
       - backups-wal-archive:/var/lib/postgresql/wal-archive
+      # TLS-сертификаты PostgreSQL (монтируются из хостовой системы — принцип автономности)
+      - ./certs/pg-server.crt:/etc/certs/pg-server.crt:ro
+      - ./certs/pg-server.key:/etc/certs/pg-server.key:ro
+      - ./certs/corp-ca.crt:/etc/certs/corp-ca.crt:ro
     networks:
       - internal
     healthcheck:
@@ -193,7 +204,12 @@ services:
         max-file: "4"
 
   # ============================================================================
-  # REDIS — ФАБРИКА
+  # REDIS — ФАБРИКА (TLS на 6379)
+  # ============================================================================
+  # Blueprint §3.1: "Шлюз ВМ №1 подключается по TLS с ACL-пользователем agui_svc"
+  # TLS-сертификаты монтируются через volume (принцип автономности §1.8).
+  # Порт 6379 — только TLS (non-TLS отключён через port 0 в redis.conf).
+  # Worker и Gateway подключаются по TLS (rediss://).
   # ============================================================================
   redis-factory:
     image: redis:8-alpine
@@ -203,16 +219,23 @@ services:
     environment:
       TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
-      # TLS + ACL agui_svc для Gateway с ВМ №1 (TLS включить в redis.conf)
+      # TLS + ACL agui_svc для Gateway с ВМ №1 (порт 6379 — только TLS)
       - "${VM2_HOST_IP}:6379:6379"
     volumes:
-      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-      - ./redis/acl.conf:/usr/local/etc/redis/acl.conf:ro
+      # Конфигурация Redis (отрендеренная через render-configs.sh)
+      - ./rendered/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./rendered/redis/acl.conf:/usr/local/etc/redis/acl.conf:ro
+      # TLS-сертификаты (монтируются из хостовой системы — принцип автономности)
+      - ./certs/redis/redis.crt:/etc/redis/tls/redis.crt:ro
+      - ./certs/redis/redis.key:/etc/redis/tls/redis.key:ro
+      - ./certs/redis/ca.crt:/etc/redis/tls/ca.crt:ro
+      # Данные Redis (AOF)
       - redis-factory-data:/data
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_FACTORY_PASSWORD\" ping | grep -q PONG"]
+      # Healthcheck через TLS (redis-cli с --tls и --cacert)
+      test: ["CMD-SHELL", "redis-cli --tls --cert /etc/redis/tls/redis.crt --key /etc/redis/tls/redis.key --cacert /etc/redis/tls/ca.crt -a \"$$REDIS_FACTORY_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5

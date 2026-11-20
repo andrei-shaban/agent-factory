@@ -1,11 +1,14 @@
 {
+  "_comment": "vm2/seaweedfs/s3.json",
+  "_blueprint": "Production Blueprint v5.2 — ВМ №2: SeaweedFS S3 IAM",
+  "_rendering": "Шаблон: ${S3_ACCESS_KEY} / ${S3_SECRET_KEY} подставляются через render-configs.sh в rendered/seaweedfs/s3.json. Ключи единые для Langfuse (ВМ №1), Worker и бэкапов (ВМ №2).",
   "identities": [
     {
-      "name": "admin",
+      "name": "factory",
       "credentials": [
         {
-          "accessKey": "${S3_ADMIN_ACCESS_KEY}",
-          "secretKey": "${S3_ADMIN_SECRET_KEY}"
+          "accessKey": "${S3_ACCESS_KEY}",
+          "secretKey": "${S3_SECRET_KEY}"
         }
       ],
       "actions": [
@@ -15,20 +18,6 @@
         "List",
         "Tagging",
         "Delete"
-      ]
-    },
-    {
-      "name": "langfuse",
-      "credentials": [
-        {
-          "accessKey": "${S3_ACCESS_KEY}",
-          "secretKey": "${S3_SECRET_KEY}"
-        }
-      ],
-      "actions": [
-        "Read",
-        "Write",
-        "List"
       ],
       "buckets": [
         {
@@ -36,31 +25,18 @@
           "actions": [
             "Read",
             "Write",
-            "List"
+            "List",
+            "Delete"
           ]
-        }
-      ]
-    },
-    {
-      "name": "factory",
-      "credentials": [
-        {
-          "accessKey": "${S3_FACTORY_ACCESS_KEY}",
-          "secretKey": "${S3_FACTORY_SECRET_KEY}"
-        }
-      ],
-      "actions": [
-        "Read",
-        "Write",
-        "List"
-      ],
-      "buckets": [
+        },
         {
           "name": "factory-artifacts",
           "actions": [
             "Read",
             "Write",
-            "List"
+            "List",
+            "Tagging",
+            "Delete"
           ]
         },
         {
@@ -68,29 +44,8 @@
           "actions": [
             "Read",
             "Write",
-            "List"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "backup-readonly",
-      "credentials": [
-        {
-          "accessKey": "${S3_BACKUP_RO_ACCESS_KEY}",
-          "secretKey": "${S3_BACKUP_RO_SECRET_KEY}"
-        }
-      ],
-      "actions": [
-        "Read",
-        "List"
-      ],
-      "buckets": [
-        {
-          "name": "postgres-backups",
-          "actions": [
-            "Read",
-            "List"
+            "List",
+            "Delete"
           ]
         }
       ]
