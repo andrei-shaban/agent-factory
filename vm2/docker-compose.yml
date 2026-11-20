@@ -1,0 +1,426 @@
+# ==============================================================================
+# docker-compose.yml — ВМ №2: Вычисления, песочницы, данные агентов
+# Production Blueprint v5.1
+# ==============================================================================
+# Кодировка: UTF-8 без BOM, окончания строк LF.
+#
+# Состав:
+#   - Worker / LangGraph (единый Python-образ с Gateway, entrypoint: taskiq worker)
+#   - PostgreSQL / pgvector — Runtime & RAG
+#   - Redis — фабрика (очередь ранов + Streams)
+#   - SeaweedFS: master + volume + filer + S3-шлюз
+#   - Docker socket proxy — управление песочницами
+#
+# Песочницы (Tools Sandbox, runsc) создаются динамически через docker-socket-proxy
+# и в этом файле не описываются.
+#
+# ОБЯЗАТЕЛЬНО перед первым стартом:
+#   1. Отрендерить redis/redis.conf и redis/acl.conf через envsubst
+#      (Redis не подставляет ${...} самостоятельно).
+#   2. Создать seaweedfs/filer.toml и seaweedfs/s3.json.
+#   3. Положить mTLS-материал в certs/ (corp-ca.crt, vm2-client.crt, vm2-client.key).
+#   4. Задать VM2_HOST_IP в .env — на этот IP публикуются порты для ВМ №1.
+# ==============================================================================
+
+name: factory-vm2
+
+services:
+  # ============================================================================
+  # WORKER / LANGGRAPH
+  # ============================================================================
+  worker:
+    image: factory/gateway:latest
+    container_name: vm2-worker
+    restart: unless-stopped
+    entrypoint: ["taskiq", "worker", "app.broker:broker", "--fs-discover", "--tasks-module", "app.tasks"]
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-Asia/Yekaterinburg}
+
+      # Redis фабрики — локально, без TLS (минимизация round-trip при XADD)
+      REDIS_FACTORY_URL: redis://:${REDIS_FACTORY_PASSWORD}@redis-factory:6379
+      REDIS_FACTORY_TLS: "false"
+
+      # PostgreSQL Runtime — локально
+      POSTGRES_RUNTIME_URL: postgresql://${WORKER_DB_USER}:${WORKER_DB_PASSWORD}@postgres-runtime:5432/factory
+
+      # Langfuse (ВМ №1)
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: ${LANGFUSE_HOST}
+
+      # SeaweedFS S3 — локально
+      SEAWEED_S3_ENDPOINT: http://seaweedfs-s3:8333
+      SEAWEED_S3_ACCESS_KEY: ${S3_FACTORY_ACCESS_KEY}
+      SEAWEED_S3_SECRET_KEY: ${S3_FACTORY_SECRET_KEY}
+      SEAWEED_S3_BUCKET_FACTORY: ${SEAWEED_S3_BUCKET_FACTORY:-factory-artifacts}
+      SEAWEED_S3_BUCKET_BACKUPS: ${SEAWEED_S3_BUCKET_BACKUPS:-postgres-backups}
+
+      # Управление песочницами через socket proxy (прямой docker.sock не монтируется)
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      SANDBOX_RUNTIME: runsc
+      SANDBOX_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2.0}
+      SANDBOX_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
+      SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-256}
+      SANDBOX_TIMEOUT: ${SANDBOX_TIMEOUT:-300}
+      WHEEL_CACHE_PATH: /app/wheel-cache
+
+      # Внутреннее зеркало PyPI (ВМ №1)
+      PYPI_MIRROR_URL: ${PYPI_MIRROR_URL}
+
+      # GPU ендпоинты — mTLS
+      GPU_ENDPOINT_URL: ${GPU_ENDPOINT_URL}
+      GPU_CLIENT_CERT: /etc/certs/vm2-client.crt
+      GPU_CLIENT_KEY: /etc/certs/vm2-client.key
+      GPU_LLM_TIMEOUT: ${GPU_LLM_TIMEOUT:-600}
+      GPU_OCR_TIMEOUT: ${GPU_OCR_TIMEOUT:-120}
+
+      # Корпоративное хранилище данных (ВМ №4) — mTLS, read-only
+      CORP_PG_URL: ${CORP_PG_URL}
+
+      # Рабочая станция (Этап 2) — mTLS
+      WORKSTATION_URL: ${WORKSTATION_URL}
+
+      # Доверие корпоративному УЦ
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+
+      # Air-Gap: телеметрия отключена
+      LANGSMITH_TRACING: "false"
+      LANGCHAIN_TRACING_V2: "false"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - ./certs/corp-ca.crt:/etc/certs/corp-ca.crt:ro
+      - ./certs/vm2-client.crt:/etc/certs/vm2-client.crt:ro
+      - ./certs/vm2-client.key:/etc/certs/vm2-client.key:ro
+      - wheel-cache:/app/wheel-cache
+      - worker-tmp:/app/tmp
+    depends_on:
+      postgres-runtime:
+        condition: service_healthy
+      redis-factory:
+        condition: service_healthy
+      seaweedfs-s3:
+        condition: service_started
+      docker-socket-proxy:
+        condition: service_started
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # procps в образе нет — проверяем наличие процесса через /proc
+      test: [ "CMD-SHELL", "python3 -c \"import os,sys; found=any('taskiq' in open(os.path.join('/proc',p,'cmdline'),'rb').read().decode('utf-8','ignore') for p in os.listdir('/proc') if p.isdigit() and os.path.exists(os.path.join('/proc',p,'cmdline'))); sys.exit(0 if found else 1)\"" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  # ============================================================================
+  # POSTGRESQL / PGVECTOR — RUNTIME & RAG
+  # ============================================================================
+  postgres-runtime:
+    image: pgvector/pgvector:pg17
+    container_name: vm2-postgres-runtime
+    restart: unless-stopped
+    # Жёсткое лимитирование памяти и WAL-архивация задаются флагами:
+    # отдельный postgresql.conf не монтируется, чтобы не рассинхронизировать конфиг.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-2GB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-256MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-512MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-6GB}
+      - -c
+      - max_connections=200
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /var/lib/postgresql/wal-archive/%f && cp %p /var/lib/postgresql/wal-archive/%f
+      - -c
+      - archive_timeout=300
+      # TLS для маршрута ВМ №1 → ВМ №2. Включить после выдачи серверного сертификата:
+      # - -c
+      # - ssl=on
+      # - -c
+      # - ssl_cert_file=/etc/certs/pg-server.crt
+      # - -c
+      # - ssl_key_file=/etc/certs/pg-server.key
+      # - -c
+      # - ssl_ca_file=/etc/certs/corp-ca.crt
+    environment:
+      POSTGRES_USER: ${POSTGRES_RUNTIME_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD}
+      POSTGRES_DB: factory
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    ports:
+      # Только на внутренний IP хоста: доступ с ВМ №1 (Gateway), не наружу
+      - "${VM2_HOST_IP}:5432:5432"
+    volumes:
+      - postgres-runtime-data:/var/lib/postgresql/data
+      - ./init-db/01-create-databases.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
+      - ./init-db/02-enable-extensions.sql:/docker-entrypoint-initdb.d/02-enable-extensions.sql:ro
+      - ./init-db/03-create-tables.sql:/docker-entrypoint-initdb.d/03-create-tables.sql:ro
+      - backups-wal-archive:/var/lib/postgresql/wal-archive
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_RUNTIME_USER} -d factory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # REDIS — ФАБРИКА
+  # ============================================================================
+  redis-factory:
+    image: redis:8-alpine
+    container_name: vm2-redis-factory
+    restart: unless-stopped
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    environment:
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    ports:
+      # TLS + ACL agui_svc для Gateway с ВМ №1 (TLS включить в redis.conf)
+      - "${VM2_HOST_IP}:6379:6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./redis/acl.conf:/usr/local/etc/redis/acl.conf:ro
+      - redis-factory-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_FACTORY_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # SEAWEEDFS — MASTER
+  # ============================================================================
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: vm2-seaweedfs-master
+    restart: unless-stopped
+    command:
+      - master
+      - -ip=seaweedfs-master
+      - -port=9333
+      - -mdir=/data/master
+      - -defaultReplication=${SEAWEED_REPLICATION:-001}
+      - -volumeSizeLimitMB=30000
+      - -garbageThreshold=0.3
+      - -resumeState
+    volumes:
+      - seaweedfs-master-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # SEAWEEDFS — VOLUME
+  # ============================================================================
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: vm2-seaweedfs-volume
+    restart: unless-stopped
+    command:
+      - volume
+      - -mserver=seaweedfs-master:9333
+      - -ip=seaweedfs-volume
+      - -port=8080
+      - -dir=/data
+      - -max=100
+      - -index=memory
+      - -dataCenter=dc1
+      - -rack=rack1
+    volumes:
+      - seaweedfs-volume-data:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # SEAWEEDFS — FILER
+  # ============================================================================
+  # Метаданные filer хранятся в LevelDB на именованном томе.
+  # Путь к БД задаётся в filer.toml — без него метаданные теряются при пересоздании.
+  # ============================================================================
+  seaweedfs-filer:
+    image: chrislusf/seaweedfs:latest
+    container_name: vm2-seaweedfs-filer
+    restart: unless-stopped
+    command:
+      - filer
+      - -master=seaweedfs-master:9333
+      - -ip=seaweedfs-filer
+      - -port=8888
+      - -defaultReplicaPlacement=${SEAWEED_REPLICATION:-001}
+      - -collection=factory
+      - -maxMB=4
+      - -dirListingLimit=10000
+    volumes:
+      - seaweedfs-filer-data:/data
+      - ./seaweedfs/filer.toml:/etc/seaweedfs/filer.toml:ro
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8888/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # SEAWEEDFS — S3 GATEWAY
+  # ============================================================================
+  seaweedfs-s3:
+    image: chrislusf/seaweedfs:latest
+    container_name: vm2-seaweedfs-s3
+    restart: unless-stopped
+    command:
+      - s3
+      - -filer=seaweedfs-filer:8888
+      - -port=8333
+      - -ip.bind=0.0.0.0
+      - -config=/etc/seaweedfs/s3.json
+    ports:
+      # S3 для Langfuse (ВМ №1) и воркеров; path-style обязателен
+      - "${VM2_HOST_IP}:8333:8333"
+    volumes:
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    depends_on:
+      seaweedfs-filer:
+        condition: service_healthy
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # DOCKER SOCKET PROXY
+  # ============================================================================
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: vm2-docker-socket-proxy
+    restart: unless-stopped
+    environment:
+      # Разрешено: создание/запуск/удаление песочниц и exec в них
+      CONTAINERS: "1"
+      POST: "1"
+      EXEC: "1"
+      # Запрещено всё остальное
+      NETWORKS: "0"
+      VOLUMES: "0"
+      IMAGES: "0"
+      INFO: "0"
+      VERSION: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      SERVICES: "0"
+      TASKS: "0"
+      NODES: "0"
+      SECRETS: "0"
+      CONFIGS: "0"
+      PLUGINS: "0"
+      SWARM: "0"
+      SYSTEM: "0"
+      DISTRIBUTION: "0"
+      EVENTS: "0"
+      PING: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+networks:
+  internal:
+    driver: bridge
+    # internal: true не ставится: Worker нужен egress к GPU-ендпоинтам, ВМ №4,
+    # ВМ №1 (PyPI, Langfuse). Ограничение — матрицей маршрутов на межсетевом экране.
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+volumes:
+  postgres-runtime-data:
+  redis-factory-data:
+  seaweedfs-master-data:
+  seaweedfs-volume-data:
+  seaweedfs-filer-data:
+  wheel-cache:
+  worker-tmp:
+  backups-wal-archive:

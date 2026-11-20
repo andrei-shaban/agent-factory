@@ -1,0 +1,380 @@
+# docker-compose.yml — ВМ №1: Периметр, шлюзы, observability, зеркала
+# Production Blueprint v5.1
+
+name: factory-vm1
+
+services:
+  # ============================================================================
+  # INGRESS / SSE-PROXY
+  # ============================================================================
+  nginx:
+    image: nginx:1.28-alpine
+    container_name: vm1-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./spa/dist:/usr/share/nginx/html:ro
+      - nginx-cache:/var/cache/nginx
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      oauth2-proxy:
+        condition: service_started
+      gateway:
+        condition: service_started
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # AUTH-PROXY (oauth2-proxy + Keycloak OIDC)
+  # ============================================================================
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    container_name: vm1-oauth2-proxy
+    restart: unless-stopped
+    command:
+      - --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+    volumes:
+      - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:4180/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # IdP / LDAP-FEDERATION (Keycloak)
+  # ============================================================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: vm1-keycloak
+    restart: unless-stopped
+    command:
+      - start
+      - --optimized
+      - --proxy-headers=xforwarded
+      - --hostname-strict=false
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-auth:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+    networks:
+      - frontend
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; grep -q '200 OK' <&3"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # POSTGRESQL — AUTH & OBSERVABILITY (Keycloak + Langfuse DB)
+  # Доступен ТОЛЬКО контейнерам внутри ВМ №1
+  # ============================================================================
+  postgres-auth:
+    image: postgres:17-alpine
+    container_name: vm1-postgres-auth
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_AUTH_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD}
+      POSTGRES_DB: postgres
+      POSTGRES_MULTIPLE_DATABASES: keycloak,langfuse,factory
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+      - ./init-db/01-create-databases.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_AUTH_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # REDIS — LANGFUSE (инжест, BullMQ)
+  # noeviction, ACL langfuse_svc, доступен только контейнерам Langfuse
+  # ============================================================================
+  redis-langfuse:
+    image: redis:8-alpine
+    container_name: vm1-redis-langfuse
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+      - --maxmemory
+      - 2gb
+      - --requirepass
+      - ${REDIS_LANGFUSE_PASSWORD}
+      - --user
+      - langfuse_svc
+      - on
+      - ">${REDIS_LANGFUSE_ACL_PASSWORD}"
+      - "~langfuse:*"
+      - "+@all"
+    volumes:
+      - redis-langfuse-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_LANGFUSE_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # LANGFUSE WEB (observability UI/API)
+  # ============================================================================
+  langfuse-web:
+    image: langfuse/langfuse:2
+    container_name: vm1-langfuse-web
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD}@postgres-auth:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL}
+      SALT: ${LANGFUSE_SALT}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      REDIS_CONNECTION_STRING: redis://:${REDIS_LANGFUSE_ACL_PASSWORD}@redis-langfuse:6379
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://vm2-seaweedfs:8333
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis-langfuse:
+        condition: service_healthy
+    networks:
+      - frontend
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # LANGFUSE WORKER (инжест трейсов)
+  # ============================================================================
+  langfuse-worker:
+    image: langfuse/langfuse-worker:2
+    container_name: vm1-langfuse-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD}@postgres-auth:5432/langfuse
+      SALT: ${LANGFUSE_SALT}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      REDIS_CONNECTION_STRING: redis://:${REDIS_LANGFUSE_ACL_PASSWORD}@redis-langfuse:6379
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://vm2-seaweedfs:8333
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis-langfuse:
+        condition: service_healthy
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # CLICKHOUSE (трейсы и observations Langfuse)
+  # ============================================================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12-alpine
+    container_name: vm1-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # PYPI MIRROR (зеркало wheels для песочниц)
+  # Доступ только с ВМ №2
+  # ============================================================================
+  pypiserver:
+    image: pypiserver/pypiserver:latest
+    container_name: vm1-pypiserver
+    restart: unless-stopped
+    command:
+      - run
+      - --host=0.0.0.0
+      - --port=8080
+      - --overwrite
+      - /data/packages
+    volumes:
+      - ./pypiserver/packages:/data/packages
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # AG-UI GATEWAY (FastAPI)
+  # Примечание: образ будет собран отдельно (Dockerfile на базе python:3.14-slim)
+  # ============================================================================
+  gateway:
+    image: factory/gateway:latest
+    container_name: vm1-gateway
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@vm2-redis-factory:6379
+      REDIS_FACTORY_TLS: "true"
+      POSTGRES_RUNTIME_URL: postgresql+asyncpg://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD}@vm2-postgres-runtime:5432/factory
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: http://langfuse-web:3000
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    volumes:
+      - ./certs/corp-ca.crt:/etc/ssl/certs/corp-ca.crt:ro
+    depends_on:
+      langfuse-web:
+        condition: service_healthy
+    networks:
+      - frontend
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+networks:
+  frontend:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+volumes:
+  postgres-auth-data:
+  redis-langfuse-data:
+  clickhouse-data:
+  clickhouse-logs:
+  nginx-cache:
+  nginx-logs:
