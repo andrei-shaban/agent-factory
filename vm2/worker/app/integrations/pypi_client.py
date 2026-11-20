@@ -1,6 +1,6 @@
 """
 PyPI Client — Клиент для управления wheel-cache через внутреннее зеркало (ВМ №1).
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Назначение:
   - Скачивание Python-пакетов (.whl) из внутреннего PyPI-зеркала (air-gap).

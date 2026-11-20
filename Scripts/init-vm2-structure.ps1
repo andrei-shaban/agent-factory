@@ -1,6 +1,6 @@
 ﻿# init-vm2-structure.ps1
 # Создание структуры директорий и файлов-пустышек для ВМ №2
-# Production Blueprint v5.1
+# Production Blueprint v5.2
 # Все файлы — пустые (0 байт), UTF-8 без BOM, окончания строк LF
 
 $ErrorActionPreference = "Stop"

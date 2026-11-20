@@ -18,7 +18,7 @@ if (-Not (Test-Path $OutputDir)) {
 Write-Host "🚀 Начало выгрузки Docker-образов для Фабрики агентов (Air-Gap)..." -ForegroundColor Cyan
 Write-Host "Целевая директория: $(Resolve-Path $OutputDir)`n" -ForegroundColor Cyan
 
-# Массив образов согласно Production Blueprint v5.1 и GPU Blueprint
+# Массив образов согласно Production Blueprint v5.2 и GPU Blueprint
 $Images = @(
     # --- ВМ №1: Периметр, шлюзы, observability, зеркала ---
     "nginx:1.28-alpine",
@@ -29,7 +29,7 @@ $Images = @(
     "postgres:17-alpine",                            # Auth & Observability (ВМ №1)
     "langfuse/langfuse:latest",                      # v4.x (уточните тег, например 4.82.0, при наличии в зеркале)
     "langfuse/langfuse-worker:latest",
-    "clickhouse/clickhouse-server:26.8-alpine",      # Согласно Blueprint v5.1
+    "clickhouse/clickhouse-server:26.8-alpine",      # Согласно Blueprint v5.2
     "pypiserver/pypiserver:latest",
 
     # --- ВМ №2: Вычисления, песочницы, данные агентов ---

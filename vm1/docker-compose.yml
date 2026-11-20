@@ -1,3 +1,4 @@
+# vm1/docker-compose.yml
 # ==============================================================================
 # docker-compose.yml — ВМ №1: Периметр, шлюзы, observability, зеркала
 # Production Blueprint v5.2
@@ -21,7 +22,9 @@
 #   5. Задать VM1_HOST_IP и VM2_HOST_IP в .env.
 #
 # ==============================================================================
+
 name: factory-vm1
+
 services:
   # ============================================================================
   # INGRESS / SSE-PROXY
@@ -386,6 +389,14 @@ services:
   # AG-UI GATEWAY (FastAPI)
   # Только сеть frontend: доступ к redis-langfuse/clickhouse/postgres-auth
   # (internal) ему НЕ нужен — изоляция по Blueprint §3.1.
+  #
+  # Корпоративный Root CA вшит в образ при сборке (Dockerfile):
+  #   COPY certs/corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt
+  #   RUN update-ca-certificates
+  # После update-ca-certificates сертификат попадает в системный bundle
+  # /etc/ssl/certs/ca-certificates.crt, на который указывает SSL_CERT_FILE.
+  # Дополнительное монтирование НЕ требуется — это исключает риск
+  # рассинхронизации версий CA между образом и хостом.
   # ============================================================================
   gateway:
     image: factory/gateway:latest
@@ -405,9 +416,6 @@ services:
       LANGFUSE_HOST: http://langfuse-web:3000
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       TZ: ${TZ:-Asia/Yekaterinburg}
-    volumes:
-      # Дублирует CA, уже вшитый в образ при сборке; оставлено как защита
-      - ./certs/corp-ca.crt:/etc/ssl/certs/certs/corp-ca.crt:ro
     depends_on:
       langfuse-web:
         condition: service_healthy

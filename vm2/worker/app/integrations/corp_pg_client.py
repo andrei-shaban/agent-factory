@@ -1,6 +1,6 @@
 """
 Corporate PostgreSQL Client — mTLS-клиент для корпоративного PG (ВМ №4).
-Production Blueprint v5.1
+Production Blueprint v5.2
 
 Назначение:
   - Read-only доступ к мастер-данным: реестры, справочники, договоры.

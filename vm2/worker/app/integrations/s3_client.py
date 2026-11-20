@@ -1,6 +1,6 @@
 """
 S3 Client — Клиент для SeaweedFS S3 (ВМ №2).
-Production Blueprint v5.1
+Production Blueprint v5.2
 
 Назначение:
   - Загрузка/скачивание артефактов фабрики (drafts, final acts, contracts).

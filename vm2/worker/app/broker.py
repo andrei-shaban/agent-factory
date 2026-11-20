@@ -1,6 +1,6 @@
 """
 TaskIQ Broker initialization.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Инициализирует брокер сообщений для асинхронного выполнения задач.
 Использует Redis (ВМ №2) в качестве бэкенда очереди.

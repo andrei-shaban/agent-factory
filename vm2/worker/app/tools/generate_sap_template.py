@@ -1,6 +1,6 @@
 """
 Generate SAP Template — Инструмент для песочницы gVisor.
-Production Blueprint v5.1
+Production Blueprint v5.2
 
 Назначение:
   - Генерация Excel-шаблона SAP (форма Z_GFL_REGFILSRV) из позиций акта.

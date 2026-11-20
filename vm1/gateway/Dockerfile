@@ -1,11 +1,12 @@
+# vm1/gateway/Dockerfile
 # syntax=docker/dockerfile:1
 # ==============================================================================
 # Dockerfile — AG-UI Gateway (FastAPI) / единый образ с Worker
-# Production Blueprint v5.1 — ВМ №1
+# Production Blueprint v5.2 — ВМ №1
 # ==============================================================================
 # Единый образ с Worker (ВМ №2): разные entrypoints (uvicorn / taskiq worker).
 # Python 3.14 — основная версия; при отсутствии бинарных wheels допускается
-# fallback на 3.13 (изменить базовый образ, см. Blueprint v5.1 п. 3.6).
+# fallback на 3.13 (изменить базовый образ, см. Blueprint v5.2 п. 3.6).
 #
 # Кодировка: UTF-8 без BOM, окончания строк LF.
 #
@@ -49,7 +50,6 @@
 
 # Базовый образ: по умолчанию тег; в проде фиксируется по digest через --build-arg.
 ARG BASE_IMAGE=python:3.14-slim
-
 
 # ==============================================================================
 # ЭТАП 1: СБОРКА ЗАВИСИМОСТЕЙ (с компиляцией и кэшированием)
@@ -97,7 +97,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt \
     && pip check
 
-
 # ==============================================================================
 # ЭТАП 2: ФИНАЛЬНЫЙ ОБРАЗ (рантайм)
 # ==============================================================================
@@ -128,7 +127,7 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
-# Отключение телеметрии (Air-Gap, Blueprint v5.1 п. 2)
+# Отключение телеметрии (Air-Gap, Blueprint v5.2 п. 2)
 ENV LANGSMITH_TRACING=false \
     LANGCHAIN_TRACING_V2=false \
     HF_HUB_OFFLINE=1 \
@@ -189,6 +188,7 @@ COPY --link gateway/app/ ./app/
 RUN groupadd --system --gid 10001 factory \
     && useradd --system --uid 10001 --gid factory --home /app --shell /bin/false factory \
     && chown -R factory:factory /app
+
 USER factory:factory
 
 # ------------------------------------------------------------------------------

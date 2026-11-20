@@ -1,6 +1,6 @@
 """
 Sandbox Client — Управление изолированными песочницами gVisor.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Реализует создание, запуск и уничтожение контейнеров через Docker Socket Proxy.
 Строго соблюдает требования безопасности Blueprint:

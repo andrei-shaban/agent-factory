@@ -1,6 +1,6 @@
 --vm2/init-db/02-enable-extensions.sql
 -- ==============================================================================
--- Production Blueprint v5.1 — ВМ №2: PostgreSQL Runtime & RAG
+-- Production Blueprint v5.2 — ВМ №2: PostgreSQL Runtime & RAG
 -- Включение расширений PostgreSQL
 -- Выполняется после 01-create-databases.sql
 -- ==============================================================================

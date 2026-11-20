@@ -1,6 +1,6 @@
 """
 Tools Package — Скрипты и утилиты, выполняемые внутри песочниц gVisor.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Назначение:
   Этот пакет содержит изолированные скрипты (например, generate_sap_template.py),

@@ -1,6 +1,6 @@
 """
 GPU Client — mTLS-клиент для запросов к GPU-узлу (.228).
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Назначение:
   - LLM-запросы (/v1/chat/completions) с поддержкой стриминга.

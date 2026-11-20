@@ -1,6 +1,6 @@
 # ВМ №1 — Периметр, шлюзы, observability, зеркала
 
-Production Blueprint v5.1
+Production Blueprint v5.2
 
 ## Назначение
 
@@ -211,7 +211,7 @@ docker exec vm1-redis-langfuse redis-cli -a "$REDIS_LANGFUSE_PASSWORD" ping
 ## Связь с Blueprint
 
 Данный узел описан в разделе «2. Размещение и стек по узлам → ВМ №1»
-Production Blueprint v5.1. Межсерверные маршруты — в разделе «4. Межсерверные
+Production Blueprint v5.2. Межсерверные маршруты — в разделе «4. Межсерверные
 маршруты». Требования к Langfuse (v4, ClickHouse ≥25.12, SDK) — в разделах
 «3.6. Базовый рантайм и наблюдаемость» и «5.7». Единый образ и сборка — в
 «3.6» и «5.5».

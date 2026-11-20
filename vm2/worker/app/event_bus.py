@@ -1,6 +1,6 @@
 """
 Event Bus — Публикация событий AG-UI в Redis Streams.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Назначение:
   - Публикация событий исполнения графа в Redis Streams

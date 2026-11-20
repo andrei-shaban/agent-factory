@@ -1,6 +1,6 @@
 """
 Document Processing Graph — Пайплайн обработки ПЗД (акты КС-2/КС-3, УПД).
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Бизнес-логика (Ф1–Ф5):
   Ф1. Загрузка и распознавание документа (OCR на .228).

@@ -1,4 +1,4 @@
 """
 Graphs package — Реестр скомпилированных графов LangGraph.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 """

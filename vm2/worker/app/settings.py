@@ -1,6 +1,6 @@
 """
 Settings module for the Worker application.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Читает переменные окружения (инжектируются docker-compose из .env).
 Используется для инициализации подключений к БД, Redis, S3, GPU и настройки песочниц.

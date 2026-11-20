@@ -1,6 +1,6 @@
 """
 TaskIQ Tasks — Точки входа для Worker.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Регистрирует задачи, которые брокер (Redis) ставит в очередь.
 Основные сценарии:

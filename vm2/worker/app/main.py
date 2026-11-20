@@ -1,6 +1,6 @@
 """
 TaskIQ Worker Main — Инициализация брокера, жизненный цикл и регистрация задач.
-Production Blueprint v5.1 — ВМ №2
+Production Blueprint v5.2 — ВМ №2
 
 Назначение:
   - Настройка хуков жизненного цикла брокера (startup/shutdown).
