@@ -136,7 +136,7 @@
       "description": "OIDC-клиент для oauth2-proxy на ВМ №1",
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
-      "secret": "CHANGE_ME_CLIENT_SECRET",
+      "secret": "${OAUTH2_PROXY_CLIENT_SECRET}",
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
@@ -150,10 +150,13 @@
       "adminUrl": "/",
       "redirectUris": [
         "https://factory.corp.example.com/*",
-        "https://factory.corp.example.com/oauth2/callback"
+        "https://factory.corp.example.com/oauth2/callback",
+        "https://langfuse.corp.example.com/*",
+        "https://langfuse.corp.example.com/oauth2/callback"
       ],
       "webOrigins": [
-        "https://factory.corp.example.com"
+        "https://factory.corp.example.com",
+        "https://langfuse.corp.example.com"
       ],
       "defaultClientScopes": [
         "web-origins",
@@ -181,7 +184,7 @@
         "login_theme": "keycloak",
         "oidc.ciba.grant.enabled": "false",
         "oauth2.device.authorization.grant.enabled": "false",
-        "post.logout.redirect.uris": "https://factory.corp.example.com/*",
+        "post.logout.redirect.uris": "https://factory.corp.example.com/* https://langfuse.corp.example.com/*",
         "saml.assertion.signature": "false",
         "saml.client.signature": "false",
         "saml.encrypt": "false",
@@ -334,57 +337,5 @@
   "clientOfflineSessionIdleTimeout": 0,
   "clientOfflineSessionMaxLifespan": 0,
   "clientSessionIdleTimeout": 0,
-  "clientSessionMaxLifespan": 0,
-  "_comment_ldap_federation": "TODO: LDAP-федерация настраивается через UI Keycloak после импорта realm. Ниже — шаблон конфигурации для справки. Удалите блок _ldap_template перед импортом или оставьте как документацию.",
-  "_ldap_template": {
-    "description": "Шаблон LDAP User Federation. Создаётся через UI: Realm Settings → User Federation → Add provider (ldap)",
-    "config": {
-      "priority": ["0"],
-      "enabled": ["true"],
-      "cachePolicy": ["DEFAULT"],
-      "batchSizeForSync": ["1000"],
-      "editMode": ["READ_ONLY"],
-      "importEnabled": ["true"],
-      "syncRegistrations": ["false"],
-      "trustEmail": ["true"],
-      "vendor": ["ad"],
-      "usernameLDAPAttribute": ["sAMAccountName"],
-      "rdnLDAPAttribute": ["cn"],
-      "uuidLDAPAttribute": ["objectGUID"],
-      "userObjectClasses": ["person, organizationalPerson, user"],
-      "connectionUrl": ["ldaps://ad.corp.example.com:636"],
-      "usersDn": ["OU=Users,DC=corp,DC=example,DC=com"],
-      "authType": ["simple"],
-      "bindDn": ["CN=svc-keycloak,OU=ServiceAccounts,DC=corp,DC=example,DC=com"],
-      "bindCredential": ["<CHANGE_ME_LDAP_BIND_PASSWORD>"],
-      "customUserSearchFilter": ["(memberOf=CN=factory-users,OU=Groups,DC=corp,DC=example,DC=com)"],
-      "searchScope": ["2"],
-      "validatePasswordPolicy": ["false"],
-      "useTruststoreSpi": ["ldapsOnly"],
-      "connectionTimeout": ["5000"],
-      "readTimeout": ["10000"],
-      "pagination": ["true"],
-      "startTls": ["false"]
-    },
-    "mappers": [
-      {
-        "name": "ldap-groups-mapper",
-        "providerId": "group-ldap-mapper",
-        "config": {
-          "groups.dn": ["OU=Groups,DC=corp,DC=example,DC=com"],
-          "group.name.ldap.attribute": ["cn"],
-          "group.object.classes": ["group"],
-          "preserve.group.inheritance": ["true"],
-          "ignore.missing.groups": ["true"],
-          "membership.ldap.attribute": ["member"],
-          "membership.attribute.type": ["DN"],
-          "membership.user.ldap.attribute": ["objectGUID"],
-          "groups.ldap.filter": ["(memberOf=CN=factory-users,OU=Groups,DC=corp,DC=example,DC=com)"],
-          "mode": ["READ_ONLY"],
-          "user.roles.retrieve.strategy": ["GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE"],
-          "memberof.ldap.attribute": ["memberOf"]
-        }
-      }
-    ]
-  }
+  "clientSessionMaxLifespan": 0
 }

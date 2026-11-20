@@ -1,71 +1,66 @@
--- ==============================================================================
--- Production Blueprint v5.1 — ВМ №1: PostgreSQL Auth & Observability
--- Скрипт инициализации баз данных и пользователей
--- Выполняется автоматически при первом запуске postgres-auth
--- ==============================================================================
--- ВАЖНО: Замените пароли на реальные значения из .env перед первым запуском!
--- Или используйте переменные окружения через psql --set (см. документацию)
--- ==============================================================================
+#!/bin/bash
+# ==============================================================================
+# 01-create-databases.sql.sh — ВМ №1: инициализация баз данных
+# Production Blueprint v5.1
+# ==============================================================================
+# Выполняется автоматически при ПЕРВОМ запуске контейнера postgres.
+# Формат .sql.sh гарантирует, что официальный образ исполнит скрипт как bash
+# с доступом к переменным окружения из docker-compose.
+#
+# По Blueprint §2, §3.1: ВМ №1 обслуживает ТОЛЬКО базы Keycloak и Langfuse.
+# База "factory" (реестр ранов) живёт на ВМ №2 — здесь НЕ создаётся.
+#
+# Переменные подставляются из .env → docker-compose → environment контейнера:
+#   KEYCLOAK_DB_USER, KEYCLOAK_DB_PASSWORD
+#   LANGFUSE_DB_USER, LANGFUSE_DB_PASSWORD
+# ==============================================================================
 
--- ==============================================================================
--- Keycloak Database
--- ==============================================================================
-CREATE DATABASE keycloak;
+set -euo pipefail
 
-CREATE USER keycloak WITH ENCRYPTED PASSWORD 'CHANGE_ME_KEYCLOAK_DB_PASSWORD';
+echo "=== Создание баз данных ВМ №1 (Ключей и наблюдение) ==="
 
--- Предоставляем полные права на базу keycloak
-GRANT ALL PRIVILEGES ON DATABASE keycloak TO keycloak;
+# --------------------------------------------------------------------------
+# 1. База Keycloak
+# --------------------------------------------------------------------------
+echo "Создание БД: keycloak, пользователь: ${KEYCLOAK_DB_USER}"
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE keycloak;
+    CREATE USER ${KEYCLOAK_DB_USER} WITH ENCRYPTED PASSWORD '${KEYCLOAK_DB_PASSWORD}';
+    GRANT ALL PRIVILEGES ON DATABASE keycloak TO ${KEYCLOAK_DB_USER};
+    ALTER DATABASE keycloak OWNER TO ${KEYCLOAK_DB_USER};
+EOSQL
 
--- Подключаемся к базе keycloak для настройки схемы
-\c keycloak
+# Настройка схемы внутри базы (нужно подключиться к самой базе)
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "keycloak" <<-EOSQL
+    GRANT ALL ON SCHEMA public TO ${KEYCLOAK_DB_USER};
+EOSQL
 
--- Keycloak требует права на создание таблиц и управление схемами
-GRANT ALL ON SCHEMA public TO keycloak;
+echo "База keycloak готова."
 
--- Возвращаемся в postgres для создания следующих баз
-\c postgres
+# --------------------------------------------------------------------------
+# 2. База Langfuse
+# --------------------------------------------------------------------------
+echo "Создание БД: langfuse, пользователь: ${LANGFUSE_DB_USER}"
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE langfuse;
+    CREATE USER ${LANGFUSE_DB_USER} WITH ENCRYPTED PASSWORD '${LANGFUSE_DB_PASSWORD}';
+    GRANT ALL PRIVILEGES ON DATABASE langfuse TO ${LANGFUSE_DB_USER};
+    ALTER DATABASE langfuse OWNER TO ${LANGFUSE_DB_USER};
+EOSQL
 
--- ==============================================================================
--- Langfuse Database
--- ==============================================================================
-CREATE DATABASE langfuse;
+# Настройка схемы внутри базы
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "langfuse" <<-EOSQL
+    GRANT ALL ON SCHEMA public TO ${LANGFUSE_DB_USER};
+EOSQL
 
-CREATE USER langfuse WITH ENCRYPTED PASSWORD 'CHANGE_ME_LANGFUSE_DB_PASSWORD';
+echo "База langfuse готова."
 
--- Предоставляем полные права на базу langfuse
-GRANT ALL PRIVILEGES ON DATABASE langfuse TO langfuse;
+# --------------------------------------------------------------------------
+# 3. Итоговая проверка
+# --------------------------------------------------------------------------
+echo "Проверка созданных баз..."
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;
+EOSQL
 
--- Подключаемся к базе langfuse для настройки схемы
-\c langfuse
-
--- Langfuse требует права на создание таблиц и управление схемами
-GRANT ALL ON SCHEMA public TO langfuse;
-
--- Возвращаемся в postgres
-\c postgres
-
--- ==============================================================================
--- Factory Database (для реестра ранов и метаданных фабрики)
--- ==============================================================================
-CREATE DATABASE factory;
-
-CREATE USER factory_gateway WITH ENCRYPTED PASSWORD 'CHANGE_ME_FACTORY_DB_PASSWORD';
-
--- Предоставляем полные права на базу factory
-GRANT ALL PRIVILEGES ON DATABASE factory TO factory_gateway;
-
--- Подключаемся к базе factory для настройки схемы
-\c factory
-
--- Factory требует права на создание таблиц и управление схемами
-GRANT ALL ON SCHEMA public TO factory_gateway;
-
--- Возвращаемся в postgres
-\c postgres
-
--- ==============================================================================
--- Итоговая проверка (опционально, для отладки)
--- ==============================================================================
--- SELECT datname FROM pg_database WHERE datistemplate = false;
--- SELECT usename FROM pg_user;
+echo "=== Инициализация баз ВМ №1 завершена ==="
