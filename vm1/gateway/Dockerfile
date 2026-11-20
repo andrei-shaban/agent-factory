@@ -15,7 +15,6 @@
 # ------------------------------------------------------------------------------
 # Сборка выполняется из КОРНЯ ВМ №1 (директория vm1/), а не из папки gateway/.
 # Это необходимо, чтобы были доступны:
-#   - ./certs/corp-ca.crt          (корпоративный Root CA)
 #   - ./gateway/requirements.txt   (зависимости)
 #   - ./gateway/app/               (код приложения)
 # Состав контекста ограничен файлом ./.dockerignore (секреты исключены).
@@ -122,7 +121,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Виртуальное окружение из этапа сборки (копируется ниже)
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Доверие к корпоративному Root CA (вшивается ниже через update-ca-certificates)
+# Пути к сертификатам будут переопределены в docker-compose.yml через volume
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
@@ -153,14 +152,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         wget \
         tini \
     && rm -rf /var/lib/apt/lists/*
-
-# ------------------------------------------------------------------------------
-# Корпоративный Root CA (air-gap)
-# ------------------------------------------------------------------------------
-# Путь относительно контекста сборки (корень vm1/): ./certs/corp-ca.crt.
-# Если файл отсутствует — сборка упадёт с понятной ошибкой.
-COPY --link certs/corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt
-RUN update-ca-certificates
 
 # ------------------------------------------------------------------------------
 # Рабочая директория

@@ -390,13 +390,8 @@ services:
   # Только сеть frontend: доступ к redis-langfuse/clickhouse/postgres-auth
   # (internal) ему НЕ нужен — изоляция по Blueprint §3.1.
   #
-  # Корпоративный Root CA вшит в образ при сборке (Dockerfile):
-  #   COPY certs/corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt
-  #   RUN update-ca-certificates
-  # После update-ca-certificates сертификат попадает в системный bundle
-  # /etc/ssl/certs/ca-certificates.crt, на который указывает SSL_CERT_FILE.
-  # Дополнительное монтирование НЕ требуется — это исключает риск
-  # рассинхронизации версий CA между образом и хостом.
+  # Корпоративный Root CA монтируется через volume (не вшит в образ).
+  # Переменные SSL_CERT_FILE и REQUESTS_CA_BUNDLE указывают напрямую на смонтированный файл.
   # ============================================================================
   gateway:
     image: factory/gateway:latest
@@ -414,8 +409,13 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse-web:3000
-      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      # Указываем напрямую на смонтированный CA-файл
+      SSL_CERT_FILE: /etc/ssl/certs/corp-ca.crt
+      REQUESTS_CA_BUNDLE: /etc/ssl/certs/corp-ca.crt
       TZ: ${TZ:-Asia/Yekaterinburg}
+    volumes:
+      # Монтирование корпоративного Root CA (исправлен путь, убрано дублирование certs/certs/)
+      - ./certs/corp-ca.crt:/etc/ssl/certs/corp-ca.crt:ro
     depends_on:
       langfuse-web:
         condition: service_healthy
