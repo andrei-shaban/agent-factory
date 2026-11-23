@@ -1,0 +1,3696 @@
+=== СТРУКТУРА ПРОЕКТА: F:\agent-factory\vm1 ===
+
+vm1/
+├── gateway
+│   ├── app
+│   │   ├── __init__.py
+│   │   └── main.py
+│   ├── Dockerfile
+│   └── requirements.txt
+├── init-db
+│   └── 01-create-databases.sh
+├── keycloak
+│   ├── import
+│   │   └── .gitkeep
+│   └── realm-export.json
+├── logs
+│   └── nginx-audit
+│       └── .gitkeep
+├── nginx
+│   ├── conf.d
+│   │   └── .gitkeep
+│   └── nginx.conf
+├── oauth2-proxy
+│   └── oauth2-proxy.cfg
+├── pypiserver
+│   └── packages
+│       └── .gitkeep
+├── rendered
+│   └── realm-export.json
+├── spa
+├── .dockerignore
+├── .env
+├── .env.example
+├── docker-compose.yml
+├── render-configs.sh
+└── rotate_secrets.py
+
+============================================================
+
+=== СОДЕРЖИМОЕ ФАЙЛОВ ===
+
+
+--- ФАЙЛ: .dockerignore ---
+
+---
+
+## 📄 Файл 2: `vm1/.dockerignore`
+
+```dockerignore
+# vm1/.dockerignore
+# ==============================================================================
+# .dockerignore — ВМ №1: ограничение контекста сборки образа gateway
+# Production Blueprint v5.2
+# ==============================================================================
+# Контекст сборки = корень vm1/ (см. gateway/Dockerfile).
+# В образ нужны ТОЛЬКО:
+#   - gateway/requirements.txt   (зависимости)
+#   - gateway/app/               (код приложения)
+# Всё остальное исключается: ускоряет сборку и не даёт секретам попасть в демон.
+# Кодировка: UTF-8 без BOM, окончания строк LF.
+# ==============================================================================
+
+# ==============================================================================
+# СЕКРЕТЫ И ОТРЕНДЕРЕННЫЕ КОНФИГИ (критично — не должны попасть в контекст)
+# ==============================================================================
+.env
+.env.*
+rendered/
+
+# ==============================================================================
+# VCS
+# ==============================================================================
+.git/
+.gitignore
+.gitattributes
+
+# ==============================================================================
+# Конфиги других сервисов ВМ №1 (в образе не нужны)
+# ==============================================================================
+docker-compose.yml
+docker-compose.override.yml
+README.md
+nginx/
+oauth2-proxy/
+keycloak/
+init-db/
+pypiserver/
+spa/
+logs/
+
+# ==============================================================================
+# Сертификаты: не нужны в контексте сборки (монтируются через volume)
+# ==============================================================================
+certs/
+
+# ==============================================================================
+# Python-артефакты и виртуальные окружения
+# ==============================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# ==============================================================================
+# Документация и логи
+# ==============================================================================
+*.md
+*.log
+
+# ==============================================================================
+# IDE и ОС
+# ==============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+----------------------------------------
+
+--- ФАЙЛ: .env ---
+# vm1/.env.example
+# ==============================================================================
+# Production Blueprint v5.2 — ВМ №1: Периметр, шлюзы, observability, зеркала
+# ==============================================================================
+# Скопируйте этот файл в .env и заполните значения:
+#   cp .env.example .env
+#   nano .env
+#
+# ВАЖНО: Все пароли должны быть сильными (минимум 32 символа, случайные).
+# Для генерации используйте: openssl rand -base64 32
+#
+# СЕРТИФИКАТ:
+#   Единый TLS-сертификат от корпоративного УЦ должен содержать в SAN оба имени:
+#     - factory.corp.example.com   (SPA, API, Keycloak на /auth, oauth2-proxy)
+#     - langfuse.corp.example.com  (Langfuse UI)
+# ==============================================================================
+
+# ==============================================================================
+# Сеть / публикация портов для ВМ №2
+# ==============================================================================
+# Адрес хоста ВМ №1, на который публикуются порты для нужд ВМ №2:
+#   - 3000 — инжест трейсов в Langfuse (воркер ВМ №2)
+#   - 8080 — зеркало PyPI (воркер ВМ №2)
+# Доступ к этим портам с других узлов должен быть закрыт на межсетевом экране.
+# НЕ используйте 0.0.0.0 — указывайте конкретный внутренний адрес хоста.
+VM1_HOST_IP=127.0.0.1
+
+# ==============================================================================
+# Межсерверные маршруты к ВМ №2
+# ==============================================================================
+# Адрес хоста ВМ №2 для исходящих соединений с ВМ №1:
+#   - Gateway ? Redis фабрики (6379, TLS + ACL agui_svc)
+#   - Gateway ? PostgreSQL runtime (5432, реестр ранов)
+#   - Langfuse ? SeaweedFS S3 (8333, blob events)
+# Это внутренний IP ВМ №2 в корпоративной сети (не публичный).
+VM2_HOST_IP=127.0.0.1
+
+# ==============================================================================
+# PostgreSQL — Auth & Observability (ВМ №1)
+# ==============================================================================
+# База ВМ №1 обслуживает ТОЛЬКО базы Keycloak и Langfuse (Blueprint §3.1).
+# Реестр ранов фабрики живёт на ВМ №2 — здесь НЕ создаётся.
+POSTGRES_AUTH_USER=factory_auth
+POSTGRES_AUTH_PASSWORD='waZf1jQ+-5uaYfHt0e9+YtS8RKLajevJ'
+
+# ==============================================================================
+# Keycloak (IdP / LDAP-федерация)
+# ==============================================================================
+# Публичный URL Keycloak.
+# Keycloak работает в path-based режиме (см. nginx location /auth/):
+# https://factory.corp.example.com/auth
+KEYCLOAK_HOSTNAME=https://factory.corp.example.com/auth
+
+# Администратор Keycloak (создаётся при первом запуске)
+KEYCLOAK_ADMIN=admin
+KEYCLOAK_ADMIN_PASSWORD='AcKjirtE1I1zH6c2YABb06WmKoWu8=q7'
+
+# Учётная запись Keycloak в PostgreSQL
+KEYCLOAK_DB_USER=keycloak
+KEYCLOAK_DB_PASSWORD='M0pOBQIikN0+tOT9m5pzNWwETKNNRbDv'
+
+# ==============================================================================
+# oauth2-proxy (Auth-прокси)
+# ==============================================================================
+# Секреты передаются в контейнер через переменные окружения (нативная поддержка
+# префикса OAUTH2_PROXY_). В cfg они НЕ указываются — см. файл 4.
+
+# OIDC-клиент, зарегистрированный в Keycloak
+OAUTH2_PROXY_CLIENT_ID=factory-spa
+OAUTH2_PROXY_CLIENT_SECRET='KZ4H6VZa8PHm6teQpvoH2y_wc9AKqPSj'
+
+# OIDC Issuer URL (Realm URL в Keycloak).
+# Path-based: issuer доступен по тому же домену, что и фабрика, под префиксом /auth.
+OAUTH2_PROXY_OIDC_ISSUER_URL=https://factory.corp.example.com/auth/realms/factory
+
+# ==============================================================================
+# Redis — Langfuse (инжест трейсов)
+# ==============================================================================
+# Пароль администратора Redis (для healthcheck и управления)
+REDIS_LANGFUSE_PASSWORD='5bNnKL9X42YnmTq_UF-jBEf1oTtE7bd0'
+
+# Пароль ACL-пользователя langfuse_svc (для подключения Langfuse)
+REDIS_LANGFUSE_ACL_PASSWORD='-c=S1QwB_tHz95c_4UidDCsG2lbOhNfi'
+
+# ==============================================================================
+# ClickHouse (трейсы и observations Langfuse)
+# ==============================================================================
+CLICKHOUSE_USER=langfuse
+CLICKHOUSE_PASSWORD='xTpzeva4QCVng3VsnoIUx1B_a8wN2LHe'
+
+# ==============================================================================
+# Langfuse (observability UI/API)
+# ==============================================================================
+# Учётная запись Langfuse в PostgreSQL
+LANGFUSE_DB_USER=langfuse
+LANGFUSE_DB_PASSWORD='5QV7z_+h0F74rCjIIL9F83qBBVNJrLak'
+
+# Секреты NextAuth (аутентификация в Langfuse UI)
+# Генерация: openssl rand -base64 64
+LANGFUSE_NEXTAUTH_SECRET='2on1wHdnlcBfMgJK8rgxq7KNgnDuBROvPL5d+wB9q/GeVzNNFK9SDuDj7pK4sZ/u+GqR182HokgNUC+nSwVAnA=='
+
+# Публичный URL Langfuse UI (отдельный vhost, SAN в сертификате).
+# Должен совпадать с server_name в nginx и доменом в сертификате.
+LANGFUSE_NEXTAUTH_URL=https://langfuse.corp.example.com
+
+# Соль для хеширования
+LANGFUSE_SALT='4ewEduv+JMmv332Qbpq8fxgA/Lgmp97kUp5ob1id4KU='
+
+# API-ключи Langfuse (для подключения воркеров и gateway)
+# Создаются в Langfuse UI после первого запуска
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+
+# ==============================================================================
+# SeaweedFS (ВМ №2) — для blob Langfuse
+# ==============================================================================
+# S3-ключи для доступа к SeaweedFS на ВМ №2.
+# Создаются при инициализации SeaweedFS.
+S3_ACCESS_KEY='BJKME8XDEXG8MBTQS0W7'
+S3_SECRET_KEY='KM8h6FfJublOkDRJSG7BVljnNgMEN96h0UQJPVzM'
+
+# ==============================================================================
+# Gateway ? ВМ №2 (Redis фабрики, PostgreSQL runtime)
+# ==============================================================================
+# Пароль ACL-пользователя agui_svc в Redis фабрики (ВМ №2)
+REDIS_FACTORY_ACL_PASSWORD='kwilkLvlsyTbDQ9PwSN2Z5vzNBMSESsL'
+
+# Учётная запись Gateway в PostgreSQL runtime (ВМ №2)
+GATEWAY_DB_USER=factory_gateway
+GATEWAY_DB_PASSWORD='9ss-2yd_136ccb=C=bESvkWdRibvUheX'
+
+# ==============================================================================
+# Дополнительные настройки (опционально)
+# ==============================================================================
+# Уровень логирования (debug, info, warning, error)
+LOG_LEVEL=info
+
+# Часовой пояс для контейнеров
+TZ=Asia/Yekaterinburg
+# URL-escaped credentials for service connection URIs
+CLICKHOUSE_PASSWORD_URLENCODED='xTpzeva4QCVng3VsnoIUx1B_a8wN2LHe'
+REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED='-c%3DS1QwB_tHz95c_4UidDCsG2lbOhNfi'
+
+LANGFUSE_DB_PASSWORD_URLENCODED='5QV7z_%2Bh0F74rCjIIL9F83qBBVNJrLak'
+REDIS_FACTORY_ACL_PASSWORD_URLENCODED='kwilkLvlsyTbDQ9PwSN2Z5vzNBMSESsL'
+GATEWAY_DB_PASSWORD_URLENCODED='9ss-2yd_136ccb%3DC%3DbESvkWdRibvUheX'
+
+# Секрет для подписи cookie (32 байта, base64)
+# Генерация: openssl rand -base64 32
+
+OAUTH2_PROXY_COOKIE_SECRET='F6gCMhohR6caCgwhNM1daFELEmOiCefW'
+
+----------------------------------------
+
+--- ФАЙЛ: .env.example ---
+# vm1/.env.example
+# ==============================================================================
+# Production Blueprint v5.2 — ВМ №1: Периметр, шлюзы, observability, зеркала
+# ==============================================================================
+# Скопируйте этот файл в .env и заполните значения:
+#   cp .env.example .env
+#   nano .env
+#
+# ВАЖНО: Все пароли должны быть сильными (минимум 32 символа, случайные).
+# Для генерации используйте: openssl rand -base64 32
+#
+# СЕРТИФИКАТ:
+#   Единый TLS-сертификат от корпоративного УЦ должен содержать в SAN оба имени:
+#     - factory.corp.example.com   (SPA, API, Keycloak на /auth, oauth2-proxy)
+#     - langfuse.corp.example.com  (Langfuse UI)
+# ==============================================================================
+
+# ==============================================================================
+# Сеть / публикация портов для ВМ №2
+# ==============================================================================
+# Адрес хоста ВМ №1, на который публикуются порты для нужд ВМ №2:
+#   - 3000 — инжест трейсов в Langfuse (воркер ВМ №2)
+#   - 8080 — зеркало PyPI (воркер ВМ №2)
+# Доступ к этим портам с других узлов должен быть закрыт на межсетевом экране.
+# НЕ используйте 0.0.0.0 — указывайте конкретный внутренний адрес хоста.
+VM1_HOST_IP=127.0.0.1
+
+# ==============================================================================
+# Межсерверные маршруты к ВМ №2
+# ==============================================================================
+# Адрес хоста ВМ №2 для исходящих соединений с ВМ №1:
+#   - Gateway ? Redis фабрики (6379, TLS + ACL agui_svc)
+#   - Gateway ? PostgreSQL runtime (5432, реестр ранов)
+#   - Langfuse ? SeaweedFS S3 (8333, blob events)
+# Это внутренний IP ВМ №2 в корпоративной сети (не публичный).
+VM2_HOST_IP=127.0.0.1
+
+# ==============================================================================
+# PostgreSQL — Auth & Observability (ВМ №1)
+# ==============================================================================
+# База ВМ №1 обслуживает ТОЛЬКО базы Keycloak и Langfuse (Blueprint §3.1).
+# Реестр ранов фабрики живёт на ВМ №2 — здесь НЕ создаётся.
+POSTGRES_AUTH_USER=factory_auth
+POSTGRES_AUTH_PASSWORD=<CHANGE_ME_STRONG_PASSWORD>
+
+# ==============================================================================
+# Keycloak (IdP / LDAP-федерация)
+# ==============================================================================
+# Публичный URL Keycloak.
+# Keycloak работает в path-based режиме (см. nginx location /auth/):
+# https://factory.corp.example.com/auth
+KEYCLOAK_HOSTNAME=https://factory.corp.example.com/auth
+
+# Администратор Keycloak (создаётся при первом запуске)
+KEYCLOAK_ADMIN=admin
+KEYCLOAK_ADMIN_PASSWORD=<CHANGE_ME_STRONG_PASSWORD>
+
+# Учётная запись Keycloak в PostgreSQL
+KEYCLOAK_DB_USER=keycloak
+KEYCLOAK_DB_PASSWORD=<CHANGE_ME_STRONG_PASSWORD>
+
+# ==============================================================================
+# oauth2-proxy (Auth-прокси)
+# ==============================================================================
+# Секреты передаются в контейнер через переменные окружения (нативная поддержка
+# префикса OAUTH2_PROXY_). В cfg они НЕ указываются — см. файл 4.
+
+# OIDC-клиент, зарегистрированный в Keycloak
+OAUTH2_PROXY_CLIENT_ID=factory-spa
+OAUTH2_PROXY_CLIENT_SECRET=<CHANGE_ME_FROM_KEYCLOAK_CLIENT>
+
+# Секрет для подписи cookie (32 байта, base64)
+# Генерация: openssl rand -base64 32
+OAUTH2_PROXY_COOKIE_SECRET=<32_BYTE_RANDOM_BASE64>
+
+# OIDC Issuer URL (Realm URL в Keycloak).
+# Path-based: issuer доступен по тому же домену, что и фабрика, под префиксом /auth.
+OAUTH2_PROXY_OIDC_ISSUER_URL=https://factory.corp.example.com/auth/realms/factory
+
+# ==============================================================================
+# Redis — Langfuse (инжест трейсов)
+# ==============================================================================
+# Пароль администратора Redis (для healthcheck и управления)
+REDIS_LANGFUSE_PASSWORD=<CHANGE_ME_STRONG_PASSWORD>
+
+# Пароль ACL-пользователя langfuse_svc (для подключения Langfuse)
+REDIS_LANGFUSE_ACL_PASSWORD=<CHANGE_ME_ACL_PASSWORD>
+
+# ==============================================================================
+# ClickHouse (трейсы и observations Langfuse)
+# ==============================================================================
+CLICKHOUSE_USER=langfuse
+CLICKHOUSE_PASSWORD=<CHANGE_ME_STRONG_PASSWORD>
+
+# ==============================================================================
+# Langfuse (observability UI/API)
+# ==============================================================================
+# Учётная запись Langfuse в PostgreSQL
+LANGFUSE_DB_USER=langfuse
+LANGFUSE_DB_PASSWORD=<CHANGE_ME_STRONG_PASSWORD>
+
+# Секреты NextAuth (аутентификация в Langfuse UI)
+# Генерация: openssl rand -base64 64
+LANGFUSE_NEXTAUTH_SECRET=<64_BYTE_RANDOM>
+
+# Публичный URL Langfuse UI (отдельный vhost, SAN в сертификате).
+# Должен совпадать с server_name в nginx и доменом в сертификате.
+LANGFUSE_NEXTAUTH_URL=https://langfuse.corp.example.com
+
+# Соль для хеширования
+LANGFUSE_SALT=<RANDOM_SALT>
+
+# API-ключи Langfuse (для подключения воркеров и gateway)
+# Создаются в Langfuse UI после первого запуска
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+
+# ==============================================================================
+# SeaweedFS (ВМ №2) — для blob Langfuse
+# ==============================================================================
+# S3-ключи для доступа к SeaweedFS на ВМ №2.
+# Создаются при инициализации SeaweedFS.
+S3_ACCESS_KEY=<SEAWEEED_S3_KEY>
+S3_SECRET_KEY=<SEAWEEED_S3_SECRET>
+
+# ==============================================================================
+# Gateway ? ВМ №2 (Redis фабрики, PostgreSQL runtime)
+# ==============================================================================
+# Пароль ACL-пользователя agui_svc в Redis фабрики (ВМ №2)
+REDIS_FACTORY_ACL_PASSWORD=<CHANGE_ME_ACL_PASSWORD>
+
+# Учётная запись Gateway в PostgreSQL runtime (ВМ №2)
+GATEWAY_DB_USER=factory_gateway
+GATEWAY_DB_PASSWORD=<CHANGE_ME_STRONG_PASSWORD>
+
+# ==============================================================================
+# Дополнительные настройки (опционально)
+# ==============================================================================
+# Уровень логирования (debug, info, warning, error)
+LOG_LEVEL=info
+
+# Часовой пояс для контейнеров
+TZ=Asia/Yekaterinburg
+----------------------------------------
+
+--- ФАЙЛ: docker-compose.yml ---
+# vm1/docker-compose.yml
+# ==============================================================================
+# docker-compose.yml — ВМ №1: Периметр, шлюзы, observability, зеркала
+# ==============================================================================
+#
+# Состав:
+#   - nginx (ingress / SSE-proxy)
+#   - oauth2-proxy + Keycloak (OIDC / LDAP-федерация)
+#   - PostgreSQL — Auth & Observability (только базы Keycloak и Langfuse)
+#   - Redis — Langfuse (noeviction, ACL langfuse_svc)
+#   - Langfuse web + worker (v4) + ClickHouse (26.8 LTS)
+#   - PyPI mirror (доступ только с ВМ №2)
+#   - AG-UI Gateway (FastAPI)
+#
+# ВАЖНО перед первым стартом:
+#   1. Скопировать .env.example в .env и заполнить значения.
+#   2. Запустить ./render-configs.sh → создаст rendered/realm-export.json.
+#   3. Поместить корпоративный TLS-сертификат в nginx/certs/
+#      (SAN должен покрывать: factory.corp.example.com, langfuse.corp.example.com).
+#   4. Поместить статическую сборку SPA в spa/dist/.
+#   5. Задать VM1_HOST_IP и VM2_HOST_IP в .env.
+#
+# ==============================================================================
+name: factory-vm1
+services:
+  # ============================================================================
+  # INGRESS / SSE-PROXY
+  # ============================================================================
+  nginx:
+    image: nginx:1.31.9-alpine  # pin digest from mirror
+    container_name: vm1-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    command: ["nginx", "-c", "/etc/nginx-runtime/nginx.conf", "-g", "daemon off;"]
+    volumes:
+      - nginx-runtime-config:/etc/nginx-runtime:ro
+      - nginx-tls:/etc/nginx/certs:ro
+      - spa-dist:/usr/share/nginx/html:ro
+      - nginx-cache:/var/cache/nginx
+      - nginx-logs:/var/log/nginx
+    environment:
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    depends_on:
+      oauth2-proxy:
+        condition: service_started
+      gateway:
+        condition: service_started
+    networks:
+      frontend:
+        aliases:
+          - langfuse.corp.example.com
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # AUTH-PROXY (oauth2-proxy + Keycloak OIDC)
+  # Секреты передаются через environment (OAUTH2_PROXY_* — нативная поддержка),
+  # а НЕ через ${...} в cfg — oauth2-proxy не раскрывает переменные в конфиге.
+  # ============================================================================
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0  # pin digest from mirror
+    container_name: vm1-oauth2-proxy
+    restart: unless-stopped
+    command:
+      - --config=/etc/oauth2-proxy-config/oauth2-proxy.cfg
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      - --provider-ca-file=/etc/oauth2-proxy-certs/ca.crt
+      - --insecure-oidc-skip-issuer-verification
+    environment:
+      # Нативные переменные окружения (имеют приоритет над cfg)
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_OIDC_ISSUER_URL: http://keycloak:8080/auth/realms/factory
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    volumes:
+      - oauth2-proxy-config:/etc/oauth2-proxy-config:ro
+      - nginx-tls:/etc/oauth2-proxy-certs:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - frontend
+    # OAuth2-proxy image is distroless; probe it from host/network diagnostics.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # IdP / LDAP-FEDERATION (Keycloak)
+  # Path-based: KC_HTTP_RELATIVE_PATH=/auth, публично через nginx /auth/
+  # Realm импортируется из rendered/ при первом запуске (--import-realm).
+  # ============================================================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0  # pin digest from mirror
+    container_name: vm1-keycloak
+    restart: unless-stopped
+    command:
+      - start
+      - --proxy-headers=xforwarded
+      - --hostname-strict=false
+      - --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-auth:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}  # https://factory.corp.example.com/auth
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    volumes:
+      # Отрендеренный realm (см. render-configs.sh): подстановка секрета клиента
+      - keycloak-import:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+    networks:
+      frontend:
+        aliases:
+          - factory.corp.example.com
+      internal: {}
+    healthcheck:
+      # Health endpoint Keycloak доступен на management-порту 9000.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # POSTGRESQL — AUTH & OBSERVABILITY (Keycloak + Langfuse DB)
+  # Доступен ТОЛЬКО контейнерам внутри ВМ №1. БД "factory" НЕ создаётся здесь
+  # (реестр ранов живёт на ВМ №2 — см. Blueprint §3.1).
+  # Пароли подставляются в init-скрипт (.sql.sh) через эти переменные окружения.
+  # ============================================================================
+  postgres-auth:
+    image: postgres:17-bookworm  # Debian base includes locale support
+    container_name: vm1-postgres-auth
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_AUTH_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD}
+      # POSTGRES_USER используется официальным init-entrypoint и нашим init-скриптом.
+      POSTGRES_AUTH_USER: ${POSTGRES_AUTH_USER}
+      POSTGRES_DB: postgres
+      # Креды для init-скрипта (исполняется с доступом к этим переменным)
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      LANGFUSE_DB_USER: ${LANGFUSE_DB_USER}
+      LANGFUSE_DB_PASSWORD: ${LANGFUSE_DB_PASSWORD}
+      TZ: ${TZ:-Asia/Yekaterinburg}
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      POSTGRES_INITDB_ARGS: --locale=C.UTF-8
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+      # Официальный образ исполняет *.sh из этого каталога при первой инициализации PGDATA.
+      - postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_AUTH_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # REDIS — LANGFUSE (инжест, BullMQ)
+  # noeviction, ACL langfuse_svc, доступен только контейнерам Langfuse
+  # ============================================================================
+  redis-langfuse:
+    image: redis:8-alpine  # pin digest from mirror
+    container_name: vm1-redis-langfuse
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+      - --maxmemory
+      - 2gb
+      - --requirepass
+      - ${REDIS_LANGFUSE_PASSWORD}
+      - --user
+      - langfuse_svc
+      - "on"
+      - ">${REDIS_LANGFUSE_ACL_PASSWORD}"
+      - "~langfuse:*"
+      - "~bull:*"
+      - "~LOCK:*"
+      - "+@all"
+    environment:
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    volumes:
+      - redis-langfuse-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_LANGFUSE_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # LANGFUSE WEB (observability UI/API) — v4
+  # Порт 3000 публикуется на VM1_HOST_IP для инжеста трейсов с ВМ №2
+  # (доступ только с ВМ №2 — ограничить матрицей на МЭ).
+  # ============================================================================
+  langfuse-web:
+    image: langfuse/langfuse:4  # v4.82+, pin digest from mirror
+    container_name: vm1-langfuse-web
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD_URLENCODED}@postgres-auth:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL}  # https://langfuse.corp.example.com
+      HOSTNAME: 0.0.0.0
+      SALT: ${LANGFUSE_SALT}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD_URLENCODED}@clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      REDIS_CONNECTION_STRING: redis://langfuse_svc:${REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED}@redis-langfuse:6379
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://${VM2_HOST_IP}:8333
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    ports:
+      # Инжест трейсов с ВМ №2 (worker шлёт по API-ключам, минуя oauth2-proxy).
+      # Источник запросов ограничить адресом ВМ №2 на межсетевом экране.
+      - "${VM1_HOST_IP}:3000:3000"
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis-langfuse:
+        condition: service_healthy
+    networks:
+      - frontend
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # LANGFUSE WORKER (инжест трейсов) — v4
+  # ============================================================================
+  langfuse-worker:
+    image: langfuse/langfuse-worker:4  # v4.82+, pin digest from mirror
+    container_name: vm1-langfuse-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD_URLENCODED}@postgres-auth:5432/langfuse
+      SALT: ${LANGFUSE_SALT}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD_URLENCODED}@clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      REDIS_CONNECTION_STRING: redis://langfuse_svc:${REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED}@redis-langfuse:6379
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://${VM2_HOST_IP}:8333
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      TELEMETRY_ENABLED: "false"
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis-langfuse:
+        condition: service_healthy
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # CLICKHOUSE (трейсы и observations Langfuse) — 26.8 LTS (мин. 25.12)
+  # ============================================================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8-alpine  # pin digest from mirror
+    container_name: vm1-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # PYPI MIRROR (зеркало wheels для песочниц)
+  # Порт 8080 публикуется на VM1_HOST_IP — доступ только с ВМ №2 (по МЭ).
+  # ============================================================================
+  pypiserver:
+    image: pypiserver/pypiserver:v2.4.3  # сверить тег с инвентаризацией зеркала; в проде — pin по digest (SBOM)
+    container_name: vm1-pypiserver
+    restart: unless-stopped
+    command:
+      - run
+      - --host=0.0.0.0
+      - --port=8080
+      - --overwrite
+      - /data/packages
+    environment:
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    ports:
+      # Загрузка wheels воркером ВМ №2 (маршрут ВМ №2 → ВМ №1:8080, по МЭ)
+      - "${VM1_HOST_IP}:8080:8080"
+    volumes:
+      - pypiserver-packages:/data/packages
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  # ============================================================================
+  # AG-UI GATEWAY (FastAPI)
+  # Только сеть frontend: доступ к redis-langfuse/clickhouse/postgres-auth
+  # (internal) ему НЕ нужен — изоляция по Blueprint §3.1.
+  #
+  # Корпоративный Root CA монтируется через volume (не вшит в образ).
+  # Переменные SSL_CERT_FILE и REQUESTS_CA_BUNDLE указывают напрямую на смонтированный файл.
+  # ============================================================================
+  gateway:
+    image: factory/gateway:latest
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: vm1-gateway
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Межсерверные маршруты к ВМ №2 (Blueprint §4)
+      # Адрес ВМ №2 задаётся переменной VM2_HOST_IP в .env
+      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD_URLENCODED}@${VM2_HOST_IP}:6379
+      REDIS_FACTORY_TLS: "true"
+      POSTGRES_RUNTIME_URL: postgresql://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD_URLENCODED}@${VM2_HOST_IP}:5432/factory?sslmode=require
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: http://langfuse-web:3000
+      # Указываем напрямую на смонтированный CA-файл
+      SSL_CERT_FILE: /run/certs/ca.crt
+      REQUESTS_CA_BUNDLE: /run/certs/ca.crt
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    volumes:
+      # Единый каталог сертификатов VM1; ca.crt служит доверенным корнем для Gateway.
+      - gateway-ca:/run/certs:ro
+    depends_on:
+      langfuse-web:
+        condition: service_healthy
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+networks:
+  frontend:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+volumes:
+  nginx-runtime-config:
+  nginx-tls:
+  spa-dist:
+  oauth2-proxy-config:
+  keycloak-import:
+  postgres-init:
+  gateway-ca:
+  pypiserver-packages:
+  postgres-auth-data:
+  redis-langfuse-data:
+  clickhouse-data:
+  clickhouse-logs:
+  nginx-cache:
+  nginx-logs:
+----------------------------------------
+
+--- ФАЙЛ: render-configs.sh ---
+#!/usr/bin/env bash
+# ==============================================================================
+# render-configs.sh — Рендеринг конфигурационных файлов ВМ №1
+# Production Blueprint v5.2
+# ==============================================================================
+# Назначение:
+#   Рендеринг шаблонов конфигов, которые не поддерживают переменные окружения
+#   нативно. На ВМ №1 это файл репрезентации Keycloak (realm-export.json).
+#
+# Что делает:
+#   1. Подставляет переменные окружения из .env в шаблон через envsubst.
+#   2. Вычищает служебные ключи с префиксом "_" из репрезентации
+#      (_ldap_template, _comment_* и т.д.), которые находятся вне схемы
+#      и могут вызвать отказ импорта репрезентации.
+#   3. Сохраняет результат в ./rendered/.
+#
+# Использование:
+#   ./render-configs.sh
+#
+# Требования:
+#   - .env заполнен (скопирован из .env.example)
+#   - envsubst установлен (пакет gettext)
+#   - python3 или jq установлен (для очистки _*-ключей из JSON)
+#
+# Результат:
+#   ./rendered/realm-export.json — монтируется в docker-compose в
+#   /opt/keycloak/data/import/realm-export.json (--import-realm).
+# ==============================================================================
+
+set -euo pipefail
+
+# ==============================================================================
+# КОНФИГУРАЦИЯ
+# ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/.env"
+KEYCLOAK_DIR="${SCRIPT_DIR}/keycloak"
+RENDERED_DIR="${SCRIPT_DIR}/rendered"
+
+# Шаблон репрезентации и целевой отрендеренный файл
+REALM_TEMPLATE="${KEYCLOAK_DIR}/realm-export.json"
+REALM_RENDERED="${RENDERED_DIR}/realm-export.json"
+
+# Переменные, которые разрешено подставлять через envsubst.
+# Явный список защищает от случайного раскрытия прочих переменных окружения
+# и сохраняет валидность JSON (подстановка идёт только для указанных имён).
+ENVSUBST_VARS='${OAUTH2_PROXY_CLIENT_SECRET}'
+
+# Цвета для вывода
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# ==============================================================================
+# ЛОГИРОВАНИЕ
+# ==============================================================================
+log_info()    { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+
+# ==============================================================================
+# ПРОВЕРКИ
+# ==============================================================================
+
+# Проверка наличия .env
+require_env() {
+    if [[ ! -f "$ENV_FILE" ]]; then
+        log_error "Файл .env не найден: ${ENV_FILE}"
+        log_error "Скопируйте .env.example в .env и заполните значения:"
+        log_error "  cp .env.example .env && nano .env"
+        exit 1
+    fi
+    log_info "Файл .env найден: ${ENV_FILE}"
+}
+
+# Проверка наличия envsubst
+require_envsubst() {
+    if ! command -v envsubst &>/dev/null; then
+        log_error "envsubst не найден."
+        log_error "Установите пакет gettext:"
+        log_error "  Debian/Ubuntu: sudo apt-get install gettext-base"
+        log_error "  RHEL/CentOS:   sudo yum install gettext"
+        exit 1
+    fi
+    log_info "envsubst найден: $(command -v envsubst)"
+}
+
+# Определение инструмента для очистки _*-ключей из JSON.
+# Предпочтение: python3 → jq. Возвращает имя инструмента или завершает работу.
+detect_json_tool() {
+    if command -v python3 &>/dev/null; then
+        echo "python3"
+    elif command -v jq &>/dev/null; then
+        echo "jq"
+    else
+        log_error "Не найден инструмент для обработки JSON (python3 или jq)."
+        log_error "Установите один из них:"
+        log_error "  python3: sudo apt-get install python3"
+        log_error "  jq:      sudo apt-get install jq"
+        exit 1
+    fi
+}
+
+# Проверка наличия шаблона репрезентации
+require_realm_template() {
+    if [[ ! -f "$REALM_TEMPLATE" ]]; then
+        log_error "Шаблон репрезентации не найден: ${REALM_TEMPLATE}"
+        exit 1
+    fi
+    log_info "Шаблон репрезентации найден: ${REALM_TEMPLATE}"
+}
+
+# Проверка наличия обязательных переменных в .env
+require_vars() {
+    # Загружаем .env в окружение для проверок и подстановки
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+
+    if [[ -z "${OAUTH2_PROXY_CLIENT_SECRET:-}" ]]; then
+        log_error "Переменная OAUTH2_PROXY_CLIENT_SECRET не задана в .env"
+        exit 1
+    fi
+
+    if [[ "${OAUTH2_PROXY_CLIENT_SECRET}" == *CHANGE_ME* ]]; then
+        log_warn "OAUTH2_PROXY_CLIENT_SECRET содержит плейсхолдер 'CHANGE_ME'."
+        log_warn "Получите реальный секрет клиента в Keycloak и обновите .env."
+    fi
+}
+
+# ==============================================================================
+# РЕНДЕРИНГ РЕПРЕЗЕНТАЦИИ
+# ==============================================================================
+render_realm() {
+    local json_tool
+    json_tool="$(detect_json_tool)"
+    log_info "Инструмент для очистки JSON: ${json_tool}"
+
+    mkdir -p "$RENDERED_DIR"
+    log_info "Директория вывода: ${RENDERED_DIR}"
+
+    # --------------------------------------------------------------------------
+    # Шаг 1. Подстановка переменных окружения.
+    # Загружаем .env в окружение (если ещё не загружено) и подставляем только
+    # переменные из явного списка — это защищает прочие переменные окружения.
+    # --------------------------------------------------------------------------
+    log_info "Подстановка переменных окружения (envsubst)..."
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+
+    local substituted
+    substituted="$(envsubst "${ENVSUBST_VARS}" < "$REALM_TEMPLATE")"
+
+    # --------------------------------------------------------------------------
+    # Шаг 2. Очистка служебных ключей с префиксом "_" из репрезентации.
+    # Удаляются на всех уровнях вложенности (например, _ldap_template,
+    # _comment_ldap_federation), чтобы импорт в Keycloak не падал на
+    # неизвестных полях.
+    # --------------------------------------------------------------------------
+    log_info "Очистка служебных _*-ключей (${json_tool})..."
+    if [[ "$json_tool" == "python3" ]]; then
+        printf '%s' "$substituted" | python3 -c '
+import json, sys
+
+def clean(obj):
+    if isinstance(obj, dict):
+        return {
+            k: clean(v)
+            for k, v in obj.items()
+            if not k.startswith("_")
+        }
+    if isinstance(obj, list):
+        return [clean(item) for item in obj]
+    return obj
+
+data = json.load(sys.stdin)
+print(json.dumps(clean(data), ensure_ascii=False, indent=2))
+' > "$REALM_RENDERED"
+    else
+        # jq: рекурсивно удаляем все ключи, начинающиеся с "_".
+        # Функция walk доступна в jq 1.6+.
+        printf '%s' "$substituted" | jq 'walk(
+            if type == "object"
+            then with_entries(select(.key | startswith("_") | not))
+            else .
+            end
+        )' > "$REALM_RENDERED"
+    fi
+
+    # --------------------------------------------------------------------------
+    # Шаг 3. Валидация результата: результат должен быть валидным JSON.
+    # --------------------------------------------------------------------------
+    log_info "Валидация результата..."
+    if [[ "$json_tool" == "python3" ]]; then
+        python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$REALM_RENDERED"
+    else
+        jq empty "$REALM_RENDERED"
+    fi
+
+    log_info "Отрендерен: ${REALM_TEMPLATE} -> ${REALM_RENDERED}"
+}
+
+# ==============================================================================
+# ОСНОВНАЯ ЛОГИКА
+# ==============================================================================
+main() {
+    echo "=============================================="
+    echo "Рендеринг конфигурационных файлов ВМ №1"
+    echo "=============================================="
+    echo ""
+
+    require_env
+    require_envsubst
+    require_realm_template
+    require_vars
+
+    echo ""
+    render_realm
+
+    echo ""
+    echo "=============================================="
+    echo "Рендеринг завершён успешно"
+    echo "=============================================="
+    echo ""
+    echo "Дальнейшие шаги:"
+    echo "  1. Убедитесь, что ./rendered/ добавлен в исключения системы"
+    echo "     контроля версий (содержит секреты)."
+    echo "  2. Запустите стек: docker compose up -d"
+    echo ""
+    echo "См. также: ${SCRIPT_DIR}/README.md"
+}
+
+main "$@"
+----------------------------------------
+
+--- ФАЙЛ: rotate_secrets.py ---
+import os
+import re
+import secrets
+import base64
+import urllib.parse
+from pathlib import Path
+
+# Путь к вашему файлу (по умолчанию ищет .env или .env.example)
+INPUT_FILE = Path(".env")
+BACKUP_FILE = Path(".env.bak")
+
+# Алфавиты для генерации
+ALPHABET_32_PASS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+=-"
+ALPHABET_ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+ALPHABET_UPPER_ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+def gen_32_pass() -> str:
+    """Генерирует 32-символьный пароль со спецсимволами (+, =, _, -)."""
+    return "".join(secrets.choice(ALPHABET_32_PASS) for _ in range(32))
+
+def gen_alnum(length: int, upper_only: bool = False) -> str:
+    """Генерирует буквенно-цифровой ключ заданной длины."""
+    alphabet = ALPHABET_UPPER_ALNUM if upper_only else ALPHABET_ALNUM
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+def gen_base64(num_bytes: int) -> str:
+    """Аналог openssl rand -base64 <num_bytes>."""
+    return base64.b64encode(secrets.token_bytes(num_bytes)).decode("ascii")
+
+def rotate_env_file():
+    if not INPUT_FILE.exists():
+        print(f"Ошибка: Файл {INPUT_FILE} не найден. Укажите правильный путь в INPUT_FILE.")
+        return
+
+    # 1. Генерируем новый набор согласованных секретов
+    new_secrets = {
+        # Стандартные 32-символьные пароли
+        "POSTGRES_AUTH_PASSWORD": gen_32_pass(),
+        "KEYCLOAK_ADMIN_PASSWORD": gen_32_pass(),
+        "KEYCLOAK_DB_PASSWORD": gen_32_pass(),
+        "OAUTH2_PROXY_CLIENT_SECRET": gen_32_pass(),
+        "REDIS_LANGFUSE_PASSWORD": gen_32_pass(),
+        "REDIS_LANGFUSE_ACL_PASSWORD": gen_32_pass(),
+        "CLICKHOUSE_PASSWORD": gen_32_pass(),
+        "LANGFUSE_DB_PASSWORD": gen_32_pass(),
+        "REDIS_FACTORY_ACL_PASSWORD": gen_32_pass(),
+        "GATEWAY_DB_PASSWORD": gen_32_pass(),
+
+        # Криптографические соли и ключи сессий
+        "LANGFUSE_NEXTAUTH_SECRET": gen_base64(64),
+        "LANGFUSE_SALT": gen_base64(32),
+        "OAUTH2_PROXY_COOKIE_SECRET": gen_alnum(32), # Ровно 32 байта для AES-256
+
+        # Ключи объектного хранилища S3 (SeaweedFS)
+        "S3_ACCESS_KEY": gen_alnum(20, upper_only=True),
+        "S3_SECRET_KEY": gen_alnum(40),
+    }
+
+    # 2. Автоматически формируем URL-encoded пары (заменяя +, = и т.д.)
+    urlencoded_mapping = {
+        "CLICKHOUSE_PASSWORD_URLENCODED": "CLICKHOUSE_PASSWORD",
+        "REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED": "REDIS_LANGFUSE_ACL_PASSWORD",
+        "LANGFUSE_DB_PASSWORD_URLENCODED": "LANGFUSE_DB_PASSWORD",
+        "REDIS_FACTORY_ACL_PASSWORD_URLENCODED": "REDIS_FACTORY_ACL_PASSWORD",
+        "GATEWAY_DB_PASSWORD_URLENCODED": "GATEWAY_DB_PASSWORD",
+    }
+
+    for encoded_key, source_key in urlencoded_mapping.items():
+        raw_val = new_secrets[source_key]
+        new_secrets[encoded_key] = urllib.parse.quote(raw_val, safe="")
+
+    # 3. Читаем исходный файл и делаем резервную копию
+    original_content = INPUT_FILE.read_text(encoding="utf-8")
+    BACKUP_FILE.write_text(original_content, encoding="utf-8")
+
+    updated_lines = []
+    replaced_count = 0
+
+    # Регулярное выражение для поиска строк вида KEY='value' или KEY=value
+    pattern = re.compile(r"^([A-Z0-9_]+)=(.*)$")
+
+    for line in original_content.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            key = match.group(1)
+            if key in new_secrets:
+                # Сохраняем формат с одинарными кавычками, как в оригинале
+                updated_lines.append(f"{key}='{new_secrets[key]}'")
+                replaced_count += 1
+                continue
+        updated_lines.append(line)
+
+    # 4. Записываем обновленный файл
+    INPUT_FILE.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+
+    print(f"Успешно обновлено секретов: {replaced_count}")
+    print(f"Старая версия сохранена в: {BACKUP_FILE.resolve()}")
+    print("ВАЖНО: Удалите .env.bak после применения изменений в инфраструктуре!")
+
+if __name__ == "__main__":
+    rotate_env_file()
+
+----------------------------------------
+
+--- ФАЙЛ: gateway\Dockerfile ---
+# vm1/gateway/Dockerfile
+# syntax=docker/dockerfile:1
+# ==============================================================================
+# Dockerfile — AG-UI Gateway (FastAPI) / единый образ с Worker
+# Production Blueprint v5.2 — ВМ №1
+# ==============================================================================
+# Единый образ с Worker (ВМ №2): разные entrypoints (uvicorn / taskiq worker).
+# Python 3.14 — основная версия; при отсутствии бинарных wheels допускается
+# fallback на 3.13 (изменить базовый образ, см. Blueprint v5.2 п. 3.6).
+#
+# Кодировка: UTF-8 без BOM, окончания строк LF.
+#
+# ------------------------------------------------------------------------------
+# КОНТЕКСТ СБОРКИ (ВАЖНО)
+# ------------------------------------------------------------------------------
+# Сборка выполняется из КОРНЯ ВМ №1 (директория vm1/), а не из папки gateway/.
+# Это необходимо, чтобы были доступны:
+#   - ./gateway/requirements.txt   (зависимости)
+#   - ./gateway/app/               (код приложения)
+# Состав контекста ограничен файлом ./.dockerignore (секреты исключены).
+#
+# Команда сборки (из корня vm1/):
+#   docker build -f gateway/Dockerfile -t factory/gateway:latest .
+#
+# ------------------------------------------------------------------------------
+# ФИКСАЦИЯ БАЗОВОГО ОБРАЗА (Blueprint §5.1)
+# ------------------------------------------------------------------------------
+# Базовый образ задаётся через build-аргумент BASE_IMAGE. По умолчанию — тег,
+# чтобы шаблон собирался «из коробки». Для продакционной сборки образ
+# фиксируется по digest из инвентаризации внутреннего зеркала:
+#
+#   docker inspect --format='{{index .RepoDigests 0}}' python:3.14-slim
+#
+# Продакционная сборка (с фиксацией по digest и зеркалом PyPI):
+#   docker build -f gateway/Dockerfile \
+#     --build-arg BASE_IMAGE=python:3.14-slim@sha256:<digest-из-зеркала> \
+#     --build-arg PIP_INDEX_URL=http://vm1-pypiserver:8080/simple/ \
+#     -t factory/gateway:latest .
+#
+# ------------------------------------------------------------------------------
+# КЭШИРОВАНИЕ
+# ------------------------------------------------------------------------------
+# Многоступенчатая сборка + кэш-монтирование (требуется BuildKit; включён по
+# умолчанию в современных версиях Docker, иначе DOCKER_BUILDKIT=1).
+# Кэшируются: скачанные .deb (/var/cache/apt), пакеты pip (/root/.cache/pip),
+# а слой установки зависимостей не инвалидируется при изменении кода
+# (код копируется последним).
+# ==============================================================================
+
+# Базовый образ: по умолчанию тег; в проде фиксируется по digest через --build-arg.
+ARG BASE_IMAGE=python:3.14-slim
+
+# ==============================================================================
+# ЭТАП 1: СБОРКА ЗАВИСИМОСТЕЙ (с компиляцией и кэшированием)
+# ==============================================================================
+# Отвечает за системные заголовочные пакеты и компиляцию всех Python-зависимостей
+# в изолированное виртуальное окружение. Результат копируется в финальный образ —
+# сами компиляторы в прод не попадают.
+FROM ${BASE_IMAGE} AS builder
+
+# Не отключаем pip-кэш: он нужен для кэш-монтирования на шаге установки.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100
+
+# Внутреннее зеркало PyPI (Air-Gap). Передаётся как --build-arg.
+ARG PIP_INDEX_URL
+ARG PIP_EXTRA_INDEX_URL
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}
+
+WORKDIR /build
+
+# Системные зависимости для компиляции (если нет бинарных wheels).
+# Кэш: скачанные .deb сохраняются между сборками.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Изолированное виртуальное окружение для всех зависимостей.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Копируем ТОЛЬКО файл зависимостей (--link: слой независим от родительского,
+# лучше попадает в кэш). Изменения кода этот слой не инвалидируют.
+COPY --link gateway/requirements.txt ./requirements.txt
+
+# Установка зависимостей из внутреннего зеркала + проверка резолва.
+# `pip check` падает на конфликтах зависимостей уже на этапе сборки, а не в рантайме.
+# Кэш: скачанные пакеты сохраняются между сборками.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt \
+    && pip check
+
+# ==============================================================================
+# ЭТАП 2: ФИНАЛЬНЫЙ ОБРАЗ (рантайм)
+# ==============================================================================
+# Чистый рантайм-образ без компиляторов и заголовков — только то, что нужно для
+# запуска шлюза. Все зависимости взяты из этапа builder.
+FROM ${BASE_IMAGE} AS runtime
+
+# ------------------------------------------------------------------------------
+# Метаданные (OCI labels)
+# ------------------------------------------------------------------------------
+LABEL org.opencontainers.image.title="factory-gateway"
+LABEL org.opencontainers.image.description="AG-UI Gateway (FastAPI) — приём RunAgentInput, постановка задач в Redis, SSE-relay"
+LABEL org.opencontainers.image.vendor="Factory Agents Platform"
+LABEL org.opencontainers.image.version="1.0.0"
+
+# ------------------------------------------------------------------------------
+# Переменные окружения
+# ------------------------------------------------------------------------------
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Виртуальное окружение из этапа сборки (копируется ниже)
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Пути к сертификатам будут переопределены в docker-compose.yml через volume
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# Отключение телеметрии (Air-Gap, Blueprint v5.2 п. 2)
+ENV LANGSMITH_TRACING=false \
+    LANGCHAIN_TRACING_V2=false \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+# Режим работы
+ENV ENVIRONMENT=production \
+    LOG_LEVEL=info
+
+# ------------------------------------------------------------------------------
+# Системные рантайм-зависимости (без компиляторов)
+# ------------------------------------------------------------------------------
+# Минимальный набор: только ca-certificates, wget и tini.
+#   - wget  : используется healthcheck'ом (и в docker-compose) — curl удалён,
+#             чтобы сократить поверхность (диагностика выполняется через wget).
+#   - tini  : корректный PID 1 — проброс сигналов и реанимация зомби
+#             (важно для uvicorn с несколькими воркерами).
+# Кэш: скачанные .deb сохраняются между сборками.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        wget \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------------------------------------
+# Рабочая директория
+# ------------------------------------------------------------------------------
+WORKDIR /app
+
+# ------------------------------------------------------------------------------
+# Зависимости из этапа сборки
+# ------------------------------------------------------------------------------
+# Копируем готовое виртуальное окружение. Слой меняется только при изменении
+# requirements, поэтому при обычных правках кода берётся из кэша.
+COPY --link --from=builder /opt/venv /opt/venv
+
+# ------------------------------------------------------------------------------
+# Код приложения
+# ------------------------------------------------------------------------------
+# Копируется ПОСЛЕДНИМ: изменения кода не инвалидируют кэш установки
+# зависимостей и системных пакетов.
+COPY --link gateway/app/ ./app/
+
+# ------------------------------------------------------------------------------
+# Создание непривилегированного пользователя
+# ------------------------------------------------------------------------------
+# UID 10001 — стандартный диапазон для service accounts
+RUN groupadd --system --gid 10001 factory \
+    && useradd --system --uid 10001 --gid factory --home /app --shell /bin/false factory \
+    && chown -R factory:factory /app
+
+USER factory:factory
+
+# ------------------------------------------------------------------------------
+# Сигналы процесса
+# ------------------------------------------------------------------------------
+# Явный стоп-сигнал (дефолт; зафиксирован для документации). tini корректно
+# передаёт SIGTERM дочернему uvicorn при `docker stop`.
+STOPSIGNAL SIGTERM
+
+# ------------------------------------------------------------------------------
+# Healthcheck
+# ------------------------------------------------------------------------------
+# /health отвечает 200 без аутентификации — используется в docker-compose
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["wget", "--spider", "-q", "http://127.0.0.1:8000/health"]
+
+# ------------------------------------------------------------------------------
+# Порт
+# ------------------------------------------------------------------------------
+EXPOSE 8000
+
+# ------------------------------------------------------------------------------
+# Entrypoint
+# ------------------------------------------------------------------------------
+# tini как PID 1: корректная обработка сигналов и реанимация зомби.
+#
+# По умолчанию образ запускается как AG-UI Gateway (uvicorn).
+# NOTE (фаза согласования ВМ №1 ↔ ВМ №2): согласно Blueprint §3.6, Gateway и
+# Worker собираются из ОДНОГО образа с разными точками входа. Для режима Worker
+# в образ будет дополнительно включён код воркера и его зависимости, а точка
+# входа переопределяется на `taskiq worker ...`. На текущем этапе — Gateway.
+ENTRYPOINT ["tini", "--"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--log-level", "info"]
+----------------------------------------
+
+--- ФАЙЛ: gateway\app\__init__.py ---
+"""
+AG-UI Gateway — FastAPI application package.
+
+Production Blueprint v5.2 — ВМ №1
+
+Приём RunAgentInput от AG-UI клиентов, постановка задач в Redis фабрики (ВМ №2),
+SSE-relay событий от воркеров к браузерам. Граф не исполняет — это задача Worker.
+"""
+
+__version__ = "1.0.0"
+__author__ = "Factory Agents Platform"
+----------------------------------------
+
+--- ФАЙЛ: gateway\app\main.py ---
+# vm1/gateway/app/main.py
+"""
+AG-UI Gateway — FastAPI application.
+Production Blueprint v5.2 — ВМ №1
+
+Обязанности:
+  - Приём RunAgentInput от AG-UI клиентов (браузеров)
+  - Постановка задач в Redis фабрики (ВМ №2) через Taskiq broker
+  - SSE-relay событий от воркеров к браузерам (XREAD BLOCK из Redis Streams)
+  - Реконнект по thread_id с Last-Event-ID
+  - Resume HITL-пауз с идемпотентностью
+  - Отмена ранов через флаг в реестре
+  - Реестр ранов в PostgreSQL (ВМ №2)
+  - Трейсинг операций в Langfuse
+
+ВАЖНО: Gateway НЕ исполняет граф — это задача Worker на ВМ №2.
+
+Исправления (Blueprint v5.2):
+  - Taskiq broker вместо прямого LPUSH (критическое №1)
+  - PostgreSQL pool для реестра ранов (критическое №3)
+  - Langfuse client для трейсинга (среднее №1)
+  - Идемпотентность resume по interrupt_id (среднее №2)
+  - Cancel run через флаг в БД (среднее №3)
+  - Реестр ранов с полным жизненным циклом статусов
+  - TLS для PostgreSQL runtime (Шаг 3): postgresql+ssl://...?sslmode=require
+"""
+
+import asyncio
+import logging
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import AsyncGenerator, Optional
+
+import orjson
+import redis.asyncio as redis
+import structlog
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from langfuse import Langfuse
+from psycopg_pool import AsyncConnectionPool
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
+from taskiq import TaskiqScheduler
+from taskiq_redis import ListQueueBroker
+
+# ==============================================================================
+# LOGGING
+# ==============================================================================
+# В продакшене используем JSON-рендерер для агрегации логов.
+# В разработке можно переключить на Console-рендерер.
+
+_settings_log_level = logging.INFO
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.StackInfoRenderer(),
+        structlog.dev.set_exc_info,
+        structlog.processors.TimeStamper(fmt="iso"),
+        # JSON-рендерер для продакшена
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(_settings_log_level),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=False,
+)
+
+logger = structlog.get_logger()
+
+
+# ==============================================================================
+# SETTINGS
+# ==============================================================================
+
+class Settings(BaseSettings):
+    """Конфигурация из переменных окружения (.env)."""
+
+    environment: str = "production"
+    log_level: str = "info"
+
+    # Redis фабрики (ВМ №2)
+    # Адрес ВМ №2 задаётся переменной VM2_HOST_IP в .env
+    redis_factory_url: str = "rediss://agui_svc:password@10.0.0.2:6379"
+    redis_factory_tls: bool = True
+
+    # Имя очереди для постановки задач (согласовано с broker ВМ №2)
+    task_queue_name: str = "factory:tasks"
+
+    # PostgreSQL runtime (ВМ №2) — для реестра ранов
+    # Схема postgresql+ssl:// с sslmode=require — для TLS-подключения (Blueprint §3.1)
+    postgres_runtime_url: str = "postgresql+ssl://factory_gateway:password@10.0.0.2:5432/factory?sslmode=require"
+
+    # Langfuse
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "http://langfuse-web:3000"
+
+    # SSE
+    sse_heartbeat_interval: int = 15  # секунды
+    sse_reconnect_timeout: int = 300  # секунд
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+settings = Settings()
+
+# Имя очереди — единое для постановки задач и реконнекта
+TASK_QUEUE_KEY = settings.task_queue_name
+
+# Имена задач Taskiq (согласованы с Worker на ВМ №2)
+TASK_RUN_AGENT = "factory.run_agent"
+TASK_RESUME_RUN = "factory.resume_run"
+
+
+# ==============================================================================
+# MODELS
+# ==============================================================================
+
+class RunAgentInput(BaseModel):
+    """Входной контракт AG-UI протокола."""
+    thread_id: str = Field(..., description="Идентификатор треда (диалога)")
+    run_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Идентификатор рана",
+    )
+    messages: list[dict] = Field(default_factory=list, description="История сообщений")
+    state: dict = Field(default_factory=dict, description="Состояние графа")
+    tools: list[dict] = Field(default_factory=list, description="Доступные инструменты")
+    context: dict = Field(default_factory=dict, description="Контекст выполнения")
+    forwarded_props: dict = Field(
+        default_factory=dict, description="Проброшенные свойства"
+    )
+
+
+class RunStatus(BaseModel):
+    """Статус рана из реестра."""
+    run_id: str
+    thread_id: str
+    status: str  # QUEUED, RUNNING, WAITING_HUMAN, SUCCEEDED, FAILED, CANCELLED
+    user: str
+    created_at: str
+    updated_at: str
+
+
+class ResumeRequest(BaseModel):
+    """Запрос на resume HITL-паузы."""
+    interrupt_id: str
+    value: dict
+
+
+# ==============================================================================
+# HELPERS
+# ==============================================================================
+
+def _serialize(obj) -> bytes:
+    """
+    Сериализация в JSON-байты через orjson (быстрее стандартного).
+    Используется для постановки задач в очередь.
+    """
+    return orjson.dumps(obj)
+
+
+def _stream_key(thread_id: str) -> str:
+    """
+    Ключ стрима для событий треда.
+    Согласован с event_bus ВМ №2: `agui:stream:{thread_id}`.
+    """
+    return f"agui:stream:{thread_id}"
+
+
+# ==============================================================================
+# LIFESPAN
+# ==============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup / shutdown."""
+    logger.info("Starting AG-UI Gateway", environment=settings.environment)
+
+    # Redis connection pool
+    # redis:// or rediss:// selects plaintext/TLS. Do not pass redis-py ssl kwargs,
+    # which are incompatible with the pinned Redis 8 client.
+    app.state.redis = redis.from_url(
+        settings.redis_factory_url,
+        decode_responses=True,
+    )
+
+    # Проверка подключения к Redis
+    try:
+        await app.state.redis.ping()
+        logger.info("Redis connection established")
+    except Exception as e:
+        logger.error("Failed to connect to Redis", error=str(e))
+        raise
+
+    # PostgreSQL connection pool (для реестра ранов)
+    # Blueprint §3.1: autocommit=True, row_factory=dict_row, prepare_threshold=0
+    # TLS включён через схему postgresql+ssl:// и sslmode=require в URL
+    app.state.pg_pool = AsyncConnectionPool(
+        conninfo=settings.postgres_runtime_url,
+        min_size=2,
+        max_size=10,
+        kwargs={
+            "autocommit": True,
+            "row_factory": None,  # Будем использовать dict_row в запросах
+        },
+    )
+
+    # Проверка подключения к PostgreSQL
+    try:
+        async with app.state.pg_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+        logger.info("PostgreSQL connection established")
+    except Exception as e:
+        logger.error("Failed to connect to PostgreSQL", error=str(e))
+        raise
+
+    # Taskiq broker (для постановки задач в Worker)
+    app.state.broker = ListQueueBroker(url=settings.redis_factory_url)
+    app.state.broker.setup_schedule(
+        TaskiqScheduler(
+            broker=app.state.broker,
+            schedulers=[],
+        )
+    )
+    logger.info("Taskiq broker initialized")
+
+    # Langfuse client (для трейсинга операций Gateway)
+    app.state.langfuse = Langfuse(
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+        host=settings.langfuse_host,
+    )
+    logger.info("Langfuse client initialized")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down AG-UI Gateway")
+    await app.state.redis.close()
+    await app.state.pg_pool.close()
+    app.state.langfuse.flush()
+
+
+# ==============================================================================
+# FASTAPI APP
+# ==============================================================================
+
+app = FastAPI(
+    title="AG-UI Gateway",
+    description="FastAPI gateway для протокола AG-UI",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS (если нужен cross-origin для SPA)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://factory.corp.example.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ==============================================================================
+# MIDDLEWARE: извлечение X-Forwarded-User/Groups от nginx
+# ==============================================================================
+
+@app.middleware("http")
+async def extract_user_headers(request: Request, call_next):
+    """Извлекает X-Forwarded-User/Groups из заголовков nginx."""
+    user = request.headers.get("X-Forwarded-User", "anonymous")
+    groups = request.headers.get("X-Forwarded-Groups", "")
+
+    # Сохраняем в контекст для логирования
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(user=user, groups=groups)
+
+    response = await call_next(request)
+    return response
+
+
+# ==============================================================================
+# ENDPOINTS
+# ==============================================================================
+
+@app.get("/health")
+async def health():
+    """Healthcheck endpoint (без аутентификации)."""
+    try:
+        await app.state.redis.ping()
+        async with app.state.pg_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+        return {"status": "healthy", "redis": "ok", "postgres": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Unhealthy: {str(e)}")
+
+
+@app.post("/api/agent")
+async def run_agent(input: RunAgentInput, request: Request):
+    """
+    Приём RunAgentInput, постановка задачи в Redis через Taskiq, SSE-relay событий.
+
+    Это основной endpoint AG-UI протокола:
+      1. Клиент отправляет POST с RunAgentInput
+      2. Gateway создаёт запись в реестре ранов (PostgreSQL) со статусом QUEUED
+      3. Gateway ставит задачу в Redis через Taskiq broker
+      4. Gateway открывает SSE-соединение и читает события из Redis Streams
+      5. События стримятся клиенту в формате AG-UI
+    """
+    user = request.headers.get("X-Forwarded-User", "anonymous")
+
+    logger.info(
+        "RunAgentInput received",
+        thread_id=input.thread_id,
+        run_id=input.run_id,
+        user=user,
+    )
+
+    # Langfuse trace
+    trace = app.state.langfuse.trace(
+        name="gateway.run_agent",
+        metadata={
+            "thread_id": input.thread_id,
+            "run_id": input.run_id,
+            "user": user,
+        },
+    )
+
+    # 1. Создание записи в реестре ранов (PostgreSQL)
+    try:
+        async with app.state.pg_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO runs (run_id, thread_id, status, user, payload, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id) DO NOTHING
+                    """,
+                    (
+                        input.run_id,
+                        input.thread_id,
+                        "QUEUED",
+                        user,
+                        orjson.dumps({
+                            "messages": input.messages,
+                            "state": input.state,
+                            "tools": input.tools,
+                            "context": input.context,
+                            "forwarded_props": input.forwarded_props,
+                        }).decode("utf-8"),
+                        datetime.utcnow(),
+                        datetime.utcnow(),
+                    ),
+                )
+        logger.info("Run created in registry", run_id=input.run_id, status="QUEUED")
+    except Exception as e:
+        logger.error("Failed to create run in registry", run_id=input.run_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to create run")
+
+    # 2. Постановка задачи в Redis через Taskiq broker
+    task_payload = {
+        "run_id": input.run_id,
+        "thread_id": input.thread_id,
+        "user": user,
+        "messages": input.messages,
+        "state": input.state,
+        "tools": input.tools,
+        "context": input.context,
+        "forwarded_props": input.forwarded_props,
+    }
+
+    try:
+        # Отправка задачи через Taskiq broker
+        await app.state.broker.send_task(
+            task_name=TASK_RUN_AGENT,
+            args=[task_payload],
+            queue=TASK_QUEUE_KEY,
+        )
+        logger.info("Task enqueued via Taskiq", run_id=input.run_id)
+    except Exception as e:
+        logger.error("Failed to enqueue task", run_id=input.run_id, error=str(e))
+        # Обновляем статус рана на FAILED
+        async with app.state.pg_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE runs
+                    SET status = %s, updated_at = %s
+                    WHERE run_id = %s
+                    """,
+                    ("FAILED", datetime.utcnow(), input.run_id),
+                )
+        raise HTTPException(status_code=500, detail="Failed to enqueue task")
+
+    # 3. SSE-relay: читаем события из Redis Streams и стримим клиенту
+    async def event_generator() -> AsyncGenerator[str, None]:
+        stream_key = _stream_key(input.thread_id)
+        # Начинаем с последнего сообщения стрима, чтобы не читать историю прошлых ранов
+        last_id = "$"
+
+        try:
+            while True:
+                # XREAD BLOCK: ждём новые события
+                result = await app.state.redis.xread(
+                    {stream_key: last_id},
+                    count=10,
+                    block=5000,  # 5 секунд
+                )
+
+                if result:
+                    for _, messages in result:
+                        for msg_id, msg_data in messages:
+                            last_id = msg_id
+
+                            # Формируем SSE-событие
+                            event_type = msg_data.get("type", "custom")
+                            event_data = msg_data.get("data", "{}")
+
+                            yield (
+                                f"id: {msg_id}\n"
+                                f"event: {event_type}\n"
+                                f"data: {event_data}\n\n"
+                            )
+
+                            # Если это терминальное событие — закрываем стрим
+                            if event_type in ("RUN_FINISHED", "RUN_ERROR"):
+                                logger.info(
+                                    "Run finished",
+                                    run_id=input.run_id,
+                                    event_type=event_type,
+                                )
+                                return
+
+                # Heartbeat (чтобы nginx не закрывал соединение)
+                yield ": heartbeat\n\n"
+                await asyncio.sleep(settings.sse_heartbeat_interval)
+
+        except asyncio.CancelledError:
+            logger.info("SSE connection closed by client", run_id=input.run_id)
+        except Exception as e:
+            logger.error("SSE error", run_id=input.run_id, error=str(e))
+            yield f"event: error\ndata: {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/threads/{thread_id}/events")
+async def reconnect_events(
+        thread_id: str,
+        request: Request,
+        last_event_id: Optional[str] = None,
+):
+    """
+    Реконнект SSE-соединения по thread_id с Last-Event-ID.
+    Используется, когда клиент потерял соединение и хочет продолжить чтение событий.
+    Заголовок `Last-Event-ID` — стандартный SSE-механизм реконнекта.
+    """
+    user = request.headers.get("X-Forwarded-User", "anonymous")
+
+    # Читаем заголовок `Last-Event-ID` (стандартный механизм)
+    # Если заголовка нет — используем query-параметр (для обратной совместимости)
+    header_last_id = request.headers.get("Last-Event-ID")
+    if header_last_id:
+        start_id = header_last_id
+    else:
+        start_id = last_event_id if last_event_id else "0-0"
+
+    logger.info(
+        "Reconnect requested",
+        thread_id=thread_id,
+        last_event_id=start_id,
+        user=user,
+    )
+
+    stream_key = _stream_key(thread_id)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            # Читаем пропущенные события (с последнего известного)
+            result = await app.state.redis.xread({stream_key: start_id}, count=100)
+
+            if result:
+                for _, messages in result:
+                    for msg_id, msg_data in messages:
+                        event_type = msg_data.get("type", "custom")
+                        event_data = msg_data.get("data", "{}")
+
+                        yield (
+                            f"id: {msg_id}\n"
+                            f"event: {event_type}\n"
+                            f"data: {event_data}\n\n"
+                        )
+
+            # Продолжаем live-tail
+            last_id = start_id
+            while True:
+                result = await app.state.redis.xread(
+                    {stream_key: last_id}, count=10, block=5000
+                )
+
+                if result:
+                    for _, messages in result:
+                        for msg_id, msg_data in messages:
+                            last_id = msg_id
+                            event_type = msg_data.get("type", "custom")
+                            event_data = msg_data.get("data", "{}")
+
+                            yield (
+                                f"id: {msg_id}\n"
+                                f"event: {event_type}\n"
+                                f"data: {event_data}\n\n"
+                            )
+
+                            if event_type in ("RUN_FINISHED", "RUN_ERROR"):
+                                return
+
+                yield ": heartbeat\n\n"
+                await asyncio.sleep(settings.sse_heartbeat_interval)
+
+        except asyncio.CancelledError:
+            logger.info("Reconnect SSE closed", thread_id=thread_id)
+        except Exception as e:
+            logger.error("Reconnect SSE error", thread_id=thread_id, error=str(e))
+            yield f"event: error\ndata: {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/threads/{thread_id}/resume")
+async def resume_run(
+        thread_id: str, resume_req: ResumeRequest, request: Request
+):
+    """
+    Resume HITL-паузы с идемпотентностью.
+
+    Воркер остановился на interrupt(), ждёт решения человека.
+    Gateway:
+      1. Проверяет идемпотентность по interrupt_id (нет ли уже обработанного)
+      2. Обновляет статус рана на WAITING_HUMAN
+      3. Ставит задачу resume в очередь через Taskiq
+      4. Воркер продолжает выполнение
+    """
+    user = request.headers.get("X-Forwarded-User", "anonymous")
+
+    logger.info(
+        "Resume requested",
+        thread_id=thread_id,
+        interrupt_id=resume_req.interrupt_id,
+        user=user,
+    )
+
+    # Langfuse trace
+    trace = app.state.langfuse.trace(
+        name="gateway.resume_run",
+        metadata={
+            "thread_id": thread_id,
+            "interrupt_id": resume_req.interrupt_id,
+            "user": user,
+        },
+    )
+
+    # 1. Идемпотентность: проверяем, нет ли уже обработанного interrupt_id
+    try:
+        async with app.state.pg_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Проверяем, есть ли ран с таким interrupt_id и статусом WAITING_HUMAN
+                await cur.execute(
+                    """
+                    SELECT run_id, status FROM runs
+                    WHERE thread_id = %s AND interrupt_id = %s
+                    """,
+                    (thread_id, resume_req.interrupt_id),
+                )
+                existing = await cur.fetchone()
+
+                if existing:
+                    existing_run_id, existing_status = existing
+
+                    # Если уже обработан (SUCCEEDED/FAILED/CANCELLED) — возвращаем 409
+                    if existing_status in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                        logger.warning(
+                            "Resume rejected: interrupt already processed",
+                            thread_id=thread_id,
+                            interrupt_id=resume_req.interrupt_id,
+                            existing_status=existing_status,
+                        )
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Interrupt already processed: {existing_status}",
+                        )
+
+                    # Если уже WAITING_HUMAN — идемпотентно возвращаем 200
+                    if existing_status == "WAITING_HUMAN":
+                        logger.info(
+                            "Resume idempotent: already waiting",
+                            thread_id=thread_id,
+                            interrupt_id=resume_req.interrupt_id,
+                        )
+                        return JSONResponse(
+                            {"status": "already_waiting", "thread_id": thread_id}
+                        )
+
+                # 2. Обновляем статус рана на WAITING_HUMAN
+                await cur.execute(
+                    """
+                    UPDATE runs
+                    SET status = %s, interrupt_id = %s, updated_at = %s
+                    WHERE thread_id = %s AND status IN ('RUNNING', 'WAITING_HUMAN')
+                    """,
+                    ("WAITING_HUMAN", resume_req.interrupt_id, datetime.utcnow(), thread_id),
+                )
+
+                if cur.rowcount == 0:
+                    logger.error(
+                        "Resume failed: no running run found",
+                        thread_id=thread_id,
+                    )
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No running run found for this thread",
+                    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update run status", thread_id=thread_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to update run status")
+
+    # 3. Постановка задачи resume в очередь через Taskiq
+    resume_payload = {
+        "type": "resume",
+        "thread_id": thread_id,
+        "interrupt_id": resume_req.interrupt_id,
+        "value": resume_req.value,
+        "user": user,
+    }
+
+    try:
+        await app.state.broker.send_task(
+            task_name=TASK_RESUME_RUN,
+            args=[resume_payload],
+            queue=TASK_QUEUE_KEY,
+        )
+        logger.info(
+            "Resume task enqueued via Taskiq",
+            thread_id=thread_id,
+            interrupt_id=resume_req.interrupt_id,
+        )
+    except Exception as e:
+        logger.error("Failed to enqueue resume task", thread_id=thread_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to enqueue resume task")
+
+    return JSONResponse({"status": "accepted", "thread_id": thread_id})
+
+
+@app.post("/api/runs/{run_id}/cancel")
+async def cancel_run(run_id: str, request: Request):
+    """
+    Отмена рана через флаг в реестре.
+
+    Кооперативная отмена:
+      1. Gateway устанавливает статус CANCELLED в реестре ранов
+      2. Воркер проверяет этот флаг перед каждым шагом
+      3. Если флаг установлен — воркер завершает выполнение
+    """
+    user = request.headers.get("X-Forwarded-User", "anonymous")
+
+    logger.info("Cancel requested", run_id=run_id, user=user)
+
+    # Langfuse trace
+    trace = app.state.langfuse.trace(
+        name="gateway.cancel_run",
+        metadata={
+            "run_id": run_id,
+            "user": user,
+        },
+    )
+
+    # Установка флага отмены в реестре ранов
+    try:
+        async with app.state.pg_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE runs
+                    SET status = %s, updated_at = %s
+                    WHERE run_id = %s AND status IN ('QUEUED', 'RUNNING', 'WAITING_HUMAN')
+                    """,
+                    ("CANCELLED", datetime.utcnow(), run_id),
+                )
+
+                if cur.rowcount == 0:
+                    logger.warning(
+                        "Cancel failed: run not found or already terminal",
+                        run_id=run_id,
+                    )
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Run not found or already completed",
+                    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to cancel run", run_id=run_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to cancel run")
+
+    logger.info("Run cancelled", run_id=run_id)
+    return JSONResponse({"status": "accepted", "run_id": run_id})
+
+
+@app.get("/api/runs/{run_id}/status")
+async def get_run_status(run_id: str, request: Request):
+    """
+    Получение статуса рана из реестра.
+    """
+    user = request.headers.get("X-Forwarded-User", "anonymous")
+
+    try:
+        async with app.state.pg_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT run_id, thread_id, status, user, created_at, updated_at
+                    FROM runs
+                    WHERE run_id = %s
+                    """,
+                    (run_id,),
+                )
+                row = await cur.fetchone()
+
+                if not row:
+                    raise HTTPException(status_code=404, detail="Run not found")
+
+                return RunStatus(
+                    run_id=row[0],
+                    thread_id=row[1],
+                    status=row[2],
+                    user=row[3],
+                    created_at=row[4].isoformat() if row[4] else "",
+                    updated_at=row[5].isoformat() if row[5] else "",
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get run status", run_id=run_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to get run status")
+
+
+# ==============================================================================
+# ERROR HANDLERS
+# ==============================================================================
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception", error=str(exc), exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
+# ==============================================================================
+# ENTRYPOINT
+# ==============================================================================
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        workers=4,
+        log_level=settings.log_level.lower(),
+    )
+----------------------------------------
+
+--- ФАЙЛ: init-db\01-create-databases.sh ---
+#!/usr/bin/env bash
+# Идемпотентная инициализация БД Keycloak и Langfuse для ВМ №1.
+set -Eeuo pipefail
+
+: "${POSTGRES_USER:?POSTGRES_USER is required}"
+: "${POSTGRES_DB:?POSTGRES_DB is required}"
+: "${KEYCLOAK_DB_USER:?KEYCLOAK_DB_USER is required}"
+: "${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}"
+: "${LANGFUSE_DB_USER:?LANGFUSE_DB_USER is required}"
+: "${LANGFUSE_DB_PASSWORD:?LANGFUSE_DB_PASSWORD is required}"
+
+create_role() {
+    local role="$1"
+    local password="$2"
+
+    psql -v ON_ERROR_STOP=1 \
+        --username "$POSTGRES_USER" \
+        --dbname "$POSTGRES_DB" \
+        --set=role_name="$role" \
+        --set=role_password="$password" <<'EOSQL'
+SELECT format('CREATE ROLE %I LOGIN', :'role_name')
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'role_name')
+\gexec
+SELECT format('ALTER ROLE %I WITH LOGIN ENCRYPTED PASSWORD %L', :'role_name', :'role_password')
+\gexec
+EOSQL
+}
+
+create_database() {
+    local database="$1"
+    local owner="$2"
+
+    psql -v ON_ERROR_STOP=1 \
+        --username "$POSTGRES_USER" \
+        --dbname "$POSTGRES_DB" \
+        --set=db_name="$database" \
+        --set=db_owner="$owner" <<'EOSQL'
+SELECT format('CREATE DATABASE %I OWNER %I', :'db_name', :'db_owner')
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db_name')
+\gexec
+SELECT format('ALTER DATABASE %I OWNER TO %I', :'db_name', :'db_owner')
+\gexec
+SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'db_name', :'db_owner')
+\gexec
+EOSQL
+
+    psql -v ON_ERROR_STOP=1 \
+        --username "$POSTGRES_USER" \
+        --dbname "$database" \
+        --set=db_owner="$owner" <<'EOSQL'
+GRANT ALL ON SCHEMA public TO :"db_owner";
+ALTER SCHEMA public OWNER TO :"db_owner";
+EOSQL
+}
+
+echo 'Creating/updating Keycloak and Langfuse database roles.'
+create_role "$KEYCLOAK_DB_USER" "$KEYCLOAK_DB_PASSWORD"
+create_role "$LANGFUSE_DB_USER" "$LANGFUSE_DB_PASSWORD"
+
+create_database keycloak "$KEYCLOAK_DB_USER"
+create_database langfuse "$LANGFUSE_DB_USER"
+
+echo 'Database initialization completed.'
+
+----------------------------------------
+
+--- ФАЙЛ: keycloak\realm-export.json ---
+{
+  "id": "factory",
+  "realm": "factory",
+  "displayName": "Factory Agents Platform",
+  "displayNameHtml": "<div class=\"kc-logo-text\"><span>Factory Agents Platform</span></div>",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 10,
+  "defaultSignatureAlgorithm": "RS256",
+  "revokeRefreshToken": false,
+  "refreshTokenMaxReuse": 0,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "roles": {
+    "realm": [
+      {
+        "name": "factory-user",
+        "description": "Базовая роль пользователя фабрики",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-specialist",
+        "description": "Специалист отдела производственного планирования",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-owner",
+        "description": "Владелец реестра ставок (утверждение HITL)",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-approver",
+        "description": "Утверждающий (ЗГД) — подпись актов",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-auditor",
+        "description": "Аудитор — только чтение логов и трейсов",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-admin",
+        "description": "Администратор платформы",
+        "composite": true,
+        "clientRole": false,
+        "composites": {
+          "realm": ["factory-user", "factory-specialist", "factory-owner", "factory-approver", "factory-auditor"]
+        }
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "factory-users",
+      "path": "/factory-users",
+      "attributes": {},
+      "realmRoles": ["factory-user"],
+      "clientRoles": {},
+      "subGroups": [
+        {
+          "name": "specialists",
+          "path": "/factory-users/specialists",
+          "attributes": {},
+          "realmRoles": ["factory-specialist"],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "owners",
+          "path": "/factory-users/owners",
+          "attributes": {},
+          "realmRoles": ["factory-owner"],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "approvers",
+          "path": "/factory-users/approvers",
+          "attributes": {},
+          "realmRoles": ["factory-approver"],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "auditors",
+          "path": "/factory-users/auditors",
+          "attributes": {},
+          "realmRoles": ["factory-auditor"],
+          "clientRoles": {},
+          "subGroups": []
+        }
+      ]
+    }
+  ],
+  "defaultRoles": ["factory-user"],
+  "requiredCredentials": ["password"],
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyInitialCounter": 0,
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "clients": [
+    {
+      "clientId": "factory-spa",
+      "name": "Factory SPA (oauth2-proxy)",
+      "description": "OIDC-клиент для oauth2-proxy на ВМ №1",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${OAUTH2_PROXY_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "consentRequired": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "rootUrl": "https://factory.corp.example.com",
+      "baseUrl": "/",
+      "adminUrl": "/",
+      "redirectUris": [
+        "https://factory.corp.example.com/*",
+        "https://factory.corp.example.com/oauth2/callback",
+        "https://langfuse.corp.example.com/*",
+        "https://langfuse.corp.example.com/oauth2/callback"
+      ],
+      "webOrigins": [
+        "https://factory.corp.example.com",
+        "https://langfuse.corp.example.com"
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email",
+        "groups"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "attributes": {
+        "access.token.lifespan": "3600",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "client_credentials.use_refresh_token": "false",
+        "exclude.session.state.from.auth.response": "false",
+        "frontchannel.logout.session.required": "true",
+        "frontchannel.logout.url": "",
+        "id.token.as.detached.signature": "false",
+        "login_theme": "keycloak",
+        "oidc.ciba.grant.enabled": "false",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "post.logout.redirect.uris": "https://factory.corp.example.com/* https://langfuse.corp.example.com/*",
+        "saml.assertion.signature": "false",
+        "saml.client.signature": "false",
+        "saml.encrypt": "false",
+        "saml.force.post.binding": "false",
+        "saml.server.signature": "false",
+        "saml_server_signature": "false",
+        "token.response.type.bearer.lower-case": "false",
+        "use.refresh.tokens": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-roles-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "client-id-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientId",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientId",
+            "jsonType.label": "String"
+          }
+        }
+      ],
+      "authorizationServicesEnabled": false
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "groups",
+      "description": "Членство в группах Keycloak",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "profile",
+      "description": "Базовый профиль пользователя",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "${profileScopeConsentText}"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "id": "user-profile-provider",
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {}
+      }
+    ]
+  },
+  "internationalizationEnabled": false,
+  "supportedLocales": ["ru", "en"],
+  "defaultLocale": "ru",
+  "authenticationFlows": [],
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xXSSProtection": "1; mode=block",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  },
+  "smtpServer": {},
+  "eventsEnabled": true,
+  "eventsListeners": ["jboss-logging"],
+  "enabledEventTypes": [
+    "LOGIN",
+    "LOGIN_ERROR",
+    "LOGOUT",
+    "CODE_TO_TOKEN",
+    "CODE_TO_TOKEN_ERROR",
+    "CLIENT_LOGIN",
+    "CLIENT_LOGIN_ERROR",
+    "REFRESH_TOKEN",
+    "REFRESH_TOKEN_ERROR",
+    "REGISTER",
+    "REGISTER_ERROR"
+  ],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "identityProviders": [],
+  "identityFederationEnabled": false,
+  "userManagedAccessAllowed": false,
+  "clientOfflineSessionIdleTimeout": 0,
+  "clientOfflineSessionMaxLifespan": 0,
+  "clientSessionIdleTimeout": 0,
+  "clientSessionMaxLifespan": 0
+}
+----------------------------------------
+
+--- ФАЙЛ: keycloak\import\.gitkeep ---
+
+----------------------------------------
+
+--- ФАЙЛ: logs\nginx-audit\.gitkeep ---
+
+----------------------------------------
+
+--- ФАЙЛ: nginx\nginx.conf ---
+# ==============================================================================
+# nginx.conf — ВМ №1: Периметр, шлюзы, observability
+# Production Blueprint v5.2
+# ==============================================================================
+# Кодировка: UTF-8 без BOM, окончания строк LF.
+#
+# Маршрутизация:
+#   factory.corp.example.com/            → SPA (статика, auth_request)
+#   factory.corp.example.com/api/        → AG-UI Gateway (SSE без буферизации)
+#   factory.corp.example.com/auth/       → Keycloak (IdP, БЕЗ auth_request)
+#   factory.corp.example.com/oauth2/     → oauth2-proxy (start/callback/sign_out)
+#   langfuse.corp.example.com/           → Langfuse UI (auth_request)
+#
+# ВАЖНО:
+#   1. TLS-сертификат должен содержать SAN на оба имени:
+#      factory.corp.example.com, langfuse.corp.example.com
+#   2. Keycloak работает в path-based режиме (KC_HTTP_RELATIVE_PATH=/auth),
+#      поэтому префикс /auth/ НЕ срезается при проксировании.
+#   3. Langfuse отдаётся отдельным vhost'ом (Next.js не поддерживает subpath).
+#      Инжест трейсов с ВМ №2 идёт напрямую на ${VM1_HOST_IP}:3000 (см. compose),
+#      минуя nginx и oauth2-proxy — аутентификация по API-ключам Langfuse.
+# ==============================================================================
+
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # ==========================================================================
+    # LOG FORMAT
+    # ==========================================================================
+    log_format json_combined escape=json
+        '{'
+            '"time_local":"$time_local",'
+            '"remote_addr":"$remote_addr",'
+            '"host":"$host",'
+            '"request":"$request",'
+            '"status":$status,'
+            '"body_bytes_sent":$body_bytes_sent,'
+            '"http_referer":"$http_referer",'
+            '"http_user_agent":"$http_user_agent",'
+            '"request_time":$request_time,'
+            '"upstream_response_time":"$upstream_response_time",'
+            '"http_x_forwarded_for":"$http_x_forwarded_for"'
+        '}';
+
+    access_log /var/log/nginx/access.log json_combined;
+
+    # ==========================================================================
+    # BASIC SETTINGS
+    # ==========================================================================
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    server_names_hash_bucket_size 64;
+    server_tokens off;
+
+    # Client body size (загрузка документов)
+    client_max_body_size 50m;
+    client_body_timeout 60s;
+
+    # Буферы для крупных OIDC-заголовков (JWT, Set-Cookie)
+    proxy_buffer_size 16k;
+    proxy_buffers 8 16k;
+    proxy_busy_buffers_size 32k;
+
+    # ==========================================================================
+    # GZIP (не применяется к text/event-stream — SSE не сжимаем)
+    # ==========================================================================
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml text/javascript
+               application/json application/javascript application/xml+rss
+               application/rss+xml application/atom+xml
+               image/svg+xml;
+
+    # ==========================================================================
+    # UPSTREAMS
+    # ==========================================================================
+    upstream oauth2_proxy {
+        server oauth2-proxy:4180;
+        keepalive 32;
+    }
+
+    upstream gateway {
+        server gateway:8000;
+        keepalive 32;
+    }
+
+    upstream keycloak {
+        server keycloak:8080;
+        keepalive 32;
+    }
+
+    upstream langfuse {
+        server langfuse-web:3000;
+        keepalive 32;
+    }
+
+    # ==========================================================================
+    # SERVER: FACTORY (SPA + API + Keycloak + oauth2)
+    # ==========================================================================
+    server {
+        listen 443 ssl;
+        http2 on;
+        server_name factory.corp.example.com;
+
+        # ----------------------------------------------------------------------
+        # TLS CONFIGURATION
+        # ----------------------------------------------------------------------
+        ssl_certificate     /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        # OCSP stapling — только при доступности внутреннего OCSP-респондера УЦ.
+        # В air-gap внешние resolver'ы запрещены.
+        # ssl_stapling on;
+        # ssl_stapling_verify on;
+        # resolver <internal-dns-ip> valid=300s;
+        # resolver_timeout 5s;
+
+        # ----------------------------------------------------------------------
+        # SECURITY HEADERS
+        # ----------------------------------------------------------------------
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Cache-Control "no-store" always;
+
+        # ----------------------------------------------------------------------
+        # OAUTH2-PROXY: AUTH SUBREQUEST (internal)
+        # ----------------------------------------------------------------------
+        location = /oauth2/auth {
+            internal;
+            proxy_pass http://oauth2_proxy/oauth2/auth;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header X-Forwarded-Uri   $request_uri;
+            proxy_set_header X-Forwarded-Method $request_method;
+
+            # Обнуление входящих идентификаторов (защита от подделки)
+            proxy_set_header X-Forwarded-User   "";
+            proxy_set_header X-Forwarded-Groups "";
+            proxy_set_header X-Forwarded-Email  "";
+
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+        }
+
+        # ----------------------------------------------------------------------
+        # OAUTH2-PROXY: LOGIN FLOW (публичный, НЕ internal)
+        # /oauth2/start    — редирект в Keycloak
+        # /oauth2/callback — обмен code на токен + установка cookie
+        # /oauth2/sign_out — выход
+        # ----------------------------------------------------------------------
+        location /oauth2/ {
+            proxy_pass http://oauth2_proxy;
+
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header Host              $host;
+
+            proxy_set_header X-Forwarded-User   "";
+            proxy_set_header X-Forwarded-Groups "";
+            proxy_set_header X-Forwarded-Email  "";
+
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_buffering on;
+        }
+
+        # ----------------------------------------------------------------------
+        # HEALTHCHECK (без аутентификации)
+        # ----------------------------------------------------------------------
+        location = /health {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "OK\n";
+        }
+
+        # ----------------------------------------------------------------------
+        # KEYCLOAK (IdP) — path-based /auth/, БЕЗ auth_request
+        # KC_HTTP_RELATIVE_PATH=/auth → префикс НЕ срезается.
+        # ----------------------------------------------------------------------
+        location /auth/ {
+            proxy_pass http://keycloak;
+
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header X-Forwarded-Port  443;
+
+            proxy_set_header X-Forwarded-User   "";
+            proxy_set_header X-Forwarded-Groups "";
+            proxy_set_header X-Forwarded-Email  "";
+
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_buffering on;
+            proxy_read_timeout 120s;
+
+            # Админ-консоль Keycloak (/auth/admin) рекомендуется дополнительно
+            # ограничить по source-IP на межсетевом экране.
+        }
+
+        # ----------------------------------------------------------------------
+        # 401 для API: отдаём честный 401, чтобы SPA сама сделала редирект
+        # на страницу входа (Blueprint §5.4). 302 на XHR ломает fetch/CORS.
+        # ----------------------------------------------------------------------
+        location @api_unauthorized {
+            default_type application/json;
+            add_header Cache-Control "no-store" always;
+            return 401 '{"detail":"unauthorized","login":"/oauth2/start"}';
+        }
+
+        # ----------------------------------------------------------------------
+        # AG-UI GATEWAY (API + SSE)
+        # ----------------------------------------------------------------------
+        location /api/ {
+            auth_request /oauth2/auth;
+            error_page 401 = @api_unauthorized;
+
+            # Извлечение идентификаторов из ответа oauth2-proxy
+            auth_request_set $auth_user   $upstream_http_x_auth_request_user;
+            auth_request_set $auth_groups $upstream_http_x_auth_request_groups;
+            auth_request_set $auth_email  $upstream_http_x_auth_request_email;
+
+            # Проброс в Gateway (перезаписывает любые входящие значения)
+            proxy_set_header X-Forwarded-User   $auth_user;
+            proxy_set_header X-Forwarded-Groups $auth_groups;
+            proxy_set_header X-Forwarded-Email  $auth_email;
+
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header Host              $host;
+
+            # Реконнект SSE: заголовок Last-Event-ID проходит как есть
+            proxy_pass http://gateway;
+
+            # ==================================================================
+            # SSE CONFIGURATION (критично для AG-UI, Blueprint §3.4)
+            # ==================================================================
+            proxy_buffering off;
+            proxy_cache off;
+            gzip off;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+            send_timeout 3600s;
+            add_header X-Accel-Buffering no always;
+            chunked_transfer_encoding on;
+        }
+
+        # ----------------------------------------------------------------------
+        # STATIC SPA (React + AG-UI)
+        # ----------------------------------------------------------------------
+        location / {
+            auth_request /oauth2/auth;
+            error_page 401 = /oauth2/start;
+
+            auth_request_set $auth_user   $upstream_http_x_auth_request_user;
+            auth_request_set $auth_groups $upstream_http_x_auth_request_groups;
+            auth_request_set $auth_email  $upstream_http_x_auth_request_email;
+
+            proxy_set_header X-Forwarded-User   $auth_user;
+            proxy_set_header X-Forwarded-Groups $auth_groups;
+            proxy_set_header X-Forwarded-Email  $auth_email;
+
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+
+            root /usr/share/nginx/html;
+            index index.html;
+
+            # SPA routing: все неизвестные пути → index.html
+            try_files $uri $uri/ /index.html;
+
+            # Кэширование хешированных ассетов.
+            # add_header в вложенном location отменяет наследование,
+            # поэтому security-заголовки продублированы явно.
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                expires 1y;
+                access_log off;
+                add_header Cache-Control "public, immutable" always;
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+                add_header X-Content-Type-Options "nosniff" always;
+                add_header X-Frame-Options "DENY" always;
+                add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+            }
+        }
+
+        # ----------------------------------------------------------------------
+        # DENY SENSITIVE PATHS
+        # ----------------------------------------------------------------------
+        location ~ /\. {
+            deny all;
+            access_log off;
+            log_not_found off;
+        }
+
+        location ~* \.(env|git|htaccess|htpasswd)$ {
+            deny all;
+            access_log off;
+            log_not_found off;
+        }
+    }
+
+    # ==========================================================================
+    # SERVER: LANGFUSE UI (отдельный vhost — Next.js не работает под subpath)
+    # Требует SAN langfuse.corp.example.com в том же сертификате.
+    # В realm Keycloak добавить redirectUri:
+    #   https://langfuse.corp.example.com/oauth2/callback
+    # ==========================================================================
+    server {
+        listen 443 ssl;
+        http2 on;
+        server_name langfuse.corp.example.com;
+
+        ssl_certificate     /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+        # ----------------------------------------------------------------------
+        # OAUTH2-PROXY (те же локации, но в рамках своего server-блока)
+        # ----------------------------------------------------------------------
+        location = /oauth2/auth {
+            internal;
+            proxy_pass http://oauth2_proxy/oauth2/auth;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header X-Forwarded-Uri   $request_uri;
+
+            proxy_set_header X-Forwarded-User   "";
+            proxy_set_header X-Forwarded-Groups "";
+            proxy_set_header X-Forwarded-Email  "";
+
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+        }
+
+        location /oauth2/ {
+            proxy_pass http://oauth2_proxy;
+
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header Host              $host;
+
+            proxy_set_header X-Forwarded-User   "";
+            proxy_set_header X-Forwarded-Groups "";
+            proxy_set_header X-Forwarded-Email  "";
+
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+        }
+
+        location = /health {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "OK\n";
+        }
+
+        # ----------------------------------------------------------------------
+        # LANGFUSE UI + API (NextAuth живёт под собственным доменом)
+        # ----------------------------------------------------------------------
+        location / {
+            auth_request /oauth2/auth;
+            error_page 401 = /oauth2/start;
+
+            auth_request_set $auth_user   $upstream_http_x_auth_request_user;
+            auth_request_set $auth_groups $upstream_http_x_auth_request_groups;
+            auth_request_set $auth_email  $upstream_http_x_auth_request_email;
+
+            proxy_set_header X-Forwarded-User   $auth_user;
+            proxy_set_header X-Forwarded-Groups $auth_groups;
+            proxy_set_header X-Forwarded-Email  $auth_email;
+
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header Host              $host;
+
+            proxy_pass http://langfuse;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_buffering on;
+            proxy_read_timeout 300s;
+        }
+
+        location ~ /\. {
+            deny all;
+            access_log off;
+            log_not_found off;
+        }
+    }
+
+    # ==========================================================================
+    # HTTP → HTTPS REDIRECT (+ healthcheck для docker/балансировщика)
+    # ==========================================================================
+    server {
+        listen 80 default_server;
+        server_name factory.corp.example.com langfuse.corp.example.com;
+
+        location = /health {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "OK\n";
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+}
+----------------------------------------
+
+--- ФАЙЛ: nginx\conf.d\.gitkeep ---
+
+----------------------------------------
+
+--- ФАЙЛ: oauth2-proxy\oauth2-proxy.cfg ---
+# ==============================================================================
+# oauth2-proxy configuration
+# Production Blueprint v5.2 — ВМ №1
+# Провайдер: Keycloak OIDC
+# ==============================================================================
+# Кодировка: UTF-8 без BOM, окончания строк LF.
+#
+# ВАЖНО: все секреты и чувствительные значения НЕ указываются в этом файле.
+# Они передаются через переменные окружения контейнера (см. docker-compose):
+#   OAUTH2_PROXY_OIDC_ISSUER_URL
+#   OAUTH2_PROXY_CLIENT_ID
+#   OAUTH2_PROXY_CLIENT_SECRET
+#   OAUTH2_PROXY_COOKIE_SECRET
+# oauth2-proxy читает переменные с префиксом OAUTH2_PROXY_ автоматически.
+# Значения вида ${...} внутри cfg НЕ раскрываются и ломают аутентификацию.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Базовые параметры
+# ------------------------------------------------------------------------------
+http_address        = "0.0.0.0:4180"
+metrics_address     = "0.0.0.0:9090"
+
+# ------------------------------------------------------------------------------
+# Провайдер: Keycloak OIDC
+# Issuer URL берётся из переменной окружения OAUTH2_PROXY_OIDC_ISSUER_URL,
+# например: https://factory.corp.example.com/auth/realms/factory
+# ------------------------------------------------------------------------------
+provider            = "keycloak-oidc"
+
+# ------------------------------------------------------------------------------
+# OIDC-клиент (регистрируется в Keycloak realm "factory")
+# client_id / client_secret берутся из переменных окружения.
+# ------------------------------------------------------------------------------
+
+# Разрешённые email-домены ("*" — любые, т.к. аутентификация через корпоративный
+# Keycloak + LDAP, а не по домену почты)
+email_domains       = ["*"]
+
+# ------------------------------------------------------------------------------
+# Cookie
+# Секрет подписи берётся из переменной окружения OAUTH2_PROXY_COOKIE_SECRET.
+# ------------------------------------------------------------------------------
+cookie_name         = "_oauth2_proxy"
+cookie_secure       = true
+cookie_httponly     = true
+cookie_samesite     = "lax"
+cookie_expire       = "24h"
+cookie_refresh      = "1h"
+cookie_csrf_per_request = true
+
+# ------------------------------------------------------------------------------
+# Заголовки (проброс в backend через nginx auth_request)
+# ------------------------------------------------------------------------------
+# Устанавливает X-Auth-Request-User / X-Auth-Request-Email / X-Auth-Request-Groups
+# для извлечения nginx через auth_request_set (Blueprint §3.4).
+set_xauthrequest    = true
+
+# Не пробрасываем токен/authorization header в backend —
+# аутентификация уже выполнена на уровне nginx + Keycloak.
+set_authorization_header   = false
+pass_access_token          = false
+pass_authorization_header  = false
+
+# Заголовки, которые oauth2-proxy устанавливает при успешной аутентификации
+# (используются, когда oauth2-proxy сам проксирует запрос — у нас не этот случай,
+# но задаём для полноты).
+pass_user_headers   = true
+
+# ------------------------------------------------------------------------------
+# Scope
+# ------------------------------------------------------------------------------
+# Scope: openid (обязательно) + profile + email + groups
+# groups — для проброса членства в LDAP-группах через Keycloak
+scope               = "openid profile email groups"
+
+# Проверка дополнительных audience в ID-токене (не требуется)
+oidc_extra_audiences = []
+
+# ------------------------------------------------------------------------------
+# Upstream
+# ------------------------------------------------------------------------------
+# oauth2-proxy не проксирует запросы — nginx сам направляет их на
+# gateway / langfuse / keycloak. "static://200" означает:
+# всегда возвращать 200 после успешной аутентификации.
+upstreams           = ["static://200"]
+
+# ------------------------------------------------------------------------------
+# Страницы входа/выхода
+# ------------------------------------------------------------------------------
+# При 401 перенаправление на /oauth2/start, который редиректит в Keycloak
+# OAuth v7 uses the built-in /oauth2/start endpoint.
+custom_templates_dir = ""
+
+# После входа/выхода — возврат на корень исходного хоста (определяется из запроса)
+# Redirect destination is derived from the proxied request host.
+
+# ------------------------------------------------------------------------------
+# Логирование
+# ------------------------------------------------------------------------------
+standard_logging    = true
+auth_logging        = true
+request_logging     = true
+
+# Уровень логирования: debug | info | warning | error
+# В проде — info, при отладке — debug
+standard_logging_format = "{{.Message}}"
+
+# Не логировать ping-запросы healthcheck
+silence_ping_logging = true
+
+# Формат логов: text | json
+# v7 emits structured logs through the standard logging format.
+
+# ------------------------------------------------------------------------------
+# Безопасность
+# ------------------------------------------------------------------------------
+# Принудительный HTTPS (в нашем случае nginx терминирует TLS, поэтому отключено)
+force_https         = false
+
+# Skip provider button — сразу редирект в Keycloak без страницы выбора
+skip_provider_button = true
+
+# Reverse proxy: доверяем заголовкам X-Forwarded-* от nginx
+reverse_proxy       = true
+
+# Whitelist доменов для редиректа после входа (пусто = только домен запроса).
+# Это позволяет обслуживать и factory., и langfuse. домены одним инстансом,
+# так как домен редиректа определяется из X-Forwarded-Host каждого запроса.
+whitelist_domains   = []
+
+# ------------------------------------------------------------------------------
+# JWT / OIDC
+# ------------------------------------------------------------------------------
+# Проверка audience в ID-токене выполняется автоматически (должен совпадать
+# с client_id). OIDC discovery включён (используется /realms/factory/.well-known).
+
+# ------------------------------------------------------------------------------
+# Healthcheck
+# ------------------------------------------------------------------------------
+# /ping отвечает 200 без аутентификации — используется в healthcheck docker-compose.
+# Дополнительных настроек не требуется.
+----------------------------------------
+
+--- ФАЙЛ: pypiserver\packages\.gitkeep ---
+
+----------------------------------------
+
+--- ФАЙЛ: rendered\realm-export.json ---
+{
+  "id": "factory",
+  "realm": "factory",
+  "displayName": "Factory Agents Platform",
+  "displayNameHtml": "<div class=\"kc-logo-text\"><span>Factory Agents Platform</span></div>",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 10,
+  "defaultSignatureAlgorithm": "RS256",
+  "revokeRefreshToken": false,
+  "refreshTokenMaxReuse": 0,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "roles": {
+    "realm": [
+      {
+        "name": "factory-user",
+        "description": "Базовая роль пользователя фабрики",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-specialist",
+        "description": "Специалист отдела производственного планирования",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-owner",
+        "description": "Владелец реестра ставок (утверждение HITL)",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-approver",
+        "description": "Утверждающий (ЗГД) — подпись актов",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-auditor",
+        "description": "Аудитор — только чтение логов и трейсов",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-admin",
+        "description": "Администратор платформы",
+        "composite": true,
+        "clientRole": false,
+        "composites": {
+          "realm": [
+            "factory-user",
+            "factory-specialist",
+            "factory-owner",
+            "factory-approver",
+            "factory-auditor"
+          ]
+        }
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "factory-users",
+      "path": "/factory-users",
+      "attributes": {},
+      "realmRoles": [
+        "factory-user"
+      ],
+      "clientRoles": {},
+      "subGroups": [
+        {
+          "name": "specialists",
+          "path": "/factory-users/specialists",
+          "attributes": {},
+          "realmRoles": [
+            "factory-specialist"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "owners",
+          "path": "/factory-users/owners",
+          "attributes": {},
+          "realmRoles": [
+            "factory-owner"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "approvers",
+          "path": "/factory-users/approvers",
+          "attributes": {},
+          "realmRoles": [
+            "factory-approver"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "auditors",
+          "path": "/factory-users/auditors",
+          "attributes": {},
+          "realmRoles": [
+            "factory-auditor"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        }
+      ]
+    }
+  ],
+  "defaultRoles": [
+    "factory-user"
+  ],
+  "requiredCredentials": [
+    "password"
+  ],
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyInitialCounter": 0,
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "clients": [
+    {
+      "clientId": "factory-spa",
+      "name": "Factory SPA (oauth2-proxy)",
+      "description": "OIDC-клиент для oauth2-proxy на ВМ №1",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "UD8kOEoNgA4a4EcVX8fG-khC8WaZALew",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "consentRequired": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "rootUrl": "https://factory.corp.example.com",
+      "baseUrl": "/",
+      "adminUrl": "/",
+      "redirectUris": [
+        "https://factory.corp.example.com/*",
+        "https://factory.corp.example.com/oauth2/callback",
+        "https://langfuse.corp.example.com/*",
+        "https://langfuse.corp.example.com/oauth2/callback"
+      ],
+      "webOrigins": [
+        "https://factory.corp.example.com",
+        "https://langfuse.corp.example.com"
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email",
+        "groups"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "attributes": {
+        "access.token.lifespan": "3600",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "client_credentials.use_refresh_token": "false",
+        "exclude.session.state.from.auth.response": "false",
+        "frontchannel.logout.session.required": "true",
+        "frontchannel.logout.url": "",
+        "id.token.as.detached.signature": "false",
+        "login_theme": "keycloak",
+        "oidc.ciba.grant.enabled": "false",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "post.logout.redirect.uris": "https://factory.corp.example.com/* https://langfuse.corp.example.com/*",
+        "saml.assertion.signature": "false",
+        "saml.client.signature": "false",
+        "saml.encrypt": "false",
+        "saml.force.post.binding": "false",
+        "saml.server.signature": "false",
+        "saml_server_signature": "false",
+        "token.response.type.bearer.lower-case": "false",
+        "use.refresh.tokens": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-roles-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "client-id-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientId",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientId",
+            "jsonType.label": "String"
+          }
+        }
+      ],
+      "authorizationServicesEnabled": false
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "groups",
+      "description": "Членство в группах Keycloak",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "profile",
+      "description": "Базовый профиль пользователя",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "${profileScopeConsentText}"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "id": "user-profile-provider",
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {}
+      }
+    ]
+  },
+  "internationalizationEnabled": false,
+  "supportedLocales": [
+    "ru",
+    "en"
+  ],
+  "defaultLocale": "ru",
+  "authenticationFlows": [],
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xXSSProtection": "1; mode=block",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  },
+  "smtpServer": {},
+  "eventsEnabled": true,
+  "eventsListeners": [
+    "jboss-logging"
+  ],
+  "enabledEventTypes": [
+    "LOGIN",
+    "LOGIN_ERROR",
+    "LOGOUT",
+    "CODE_TO_TOKEN",
+    "CODE_TO_TOKEN_ERROR",
+    "CLIENT_LOGIN",
+    "CLIENT_LOGIN_ERROR",
+    "REFRESH_TOKEN",
+    "REFRESH_TOKEN_ERROR",
+    "REGISTER",
+    "REGISTER_ERROR"
+  ],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "identityProviders": [],
+  "identityFederationEnabled": false,
+  "userManagedAccessAllowed": false,
+  "clientOfflineSessionIdleTimeout": 0,
+  "clientOfflineSessionMaxLifespan": 0,
+  "clientSessionIdleTimeout": 0,
+  "clientSessionMaxLifespan": 0
+}
+
+----------------------------------------

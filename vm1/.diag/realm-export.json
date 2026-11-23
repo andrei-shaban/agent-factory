@@ -1,0 +1,366 @@
+{
+  "id": "factory",
+  "realm": "factory",
+  "displayName": "Factory Agents Platform",
+  "displayNameHtml": "<div class=\"kc-logo-text\"><span>Factory Agents Platform</span></div>",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 10,
+  "defaultSignatureAlgorithm": "RS256",
+  "revokeRefreshToken": false,
+  "refreshTokenMaxReuse": 0,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "roles": {
+    "realm": [
+      {
+        "name": "factory-user",
+        "description": "Базовая роль пользователя фабрики",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-specialist",
+        "description": "Специалист отдела производственного планирования",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-owner",
+        "description": "Владелец реестра ставок (утверждение HITL)",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-approver",
+        "description": "Утверждающий (ЗГД) — подпись актов",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-auditor",
+        "description": "Аудитор — только чтение логов и трейсов",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "factory-admin",
+        "description": "Администратор платформы",
+        "composite": true,
+        "clientRole": false,
+        "composites": {
+          "realm": [
+            "factory-user",
+            "factory-specialist",
+            "factory-owner",
+            "factory-approver",
+            "factory-auditor"
+          ]
+        }
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "factory-users",
+      "path": "/factory-users",
+      "attributes": {},
+      "realmRoles": [
+        "factory-user"
+      ],
+      "clientRoles": {},
+      "subGroups": [
+        {
+          "name": "specialists",
+          "path": "/factory-users/specialists",
+          "attributes": {},
+          "realmRoles": [
+            "factory-specialist"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "owners",
+          "path": "/factory-users/owners",
+          "attributes": {},
+          "realmRoles": [
+            "factory-owner"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "approvers",
+          "path": "/factory-users/approvers",
+          "attributes": {},
+          "realmRoles": [
+            "factory-approver"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        },
+        {
+          "name": "auditors",
+          "path": "/factory-users/auditors",
+          "attributes": {},
+          "realmRoles": [
+            "factory-auditor"
+          ],
+          "clientRoles": {},
+          "subGroups": []
+        }
+      ]
+    }
+  ],
+  "defaultRoles": [
+    "factory-user"
+  ],
+  "requiredCredentials": [
+    "password"
+  ],
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyInitialCounter": 0,
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "clients": [
+    {
+      "clientId": "factory-spa",
+      "name": "Factory SPA (oauth2-proxy)",
+      "description": "OIDC-клиент для oauth2-proxy на ВМ №1",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "UD8kOEoNgA4a4EcVX8fG-khC8WaZALew",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "consentRequired": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "rootUrl": "https://factory.corp.example.com",
+      "baseUrl": "/",
+      "adminUrl": "/",
+      "redirectUris": [
+        "https://factory.corp.example.com/*",
+        "https://factory.corp.example.com/oauth2/callback",
+        "https://langfuse.corp.example.com/*",
+        "https://langfuse.corp.example.com/oauth2/callback"
+      ],
+      "webOrigins": [
+        "https://factory.corp.example.com",
+        "https://langfuse.corp.example.com"
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email",
+        "groups"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "attributes": {
+        "access.token.lifespan": "3600",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "client_credentials.use_refresh_token": "false",
+        "exclude.session.state.from.auth.response": "false",
+        "frontchannel.logout.session.required": "true",
+        "frontchannel.logout.url": "",
+        "id.token.as.detached.signature": "false",
+        "login_theme": "keycloak",
+        "oidc.ciba.grant.enabled": "false",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "post.logout.redirect.uris": "https://factory.corp.example.com/* https://langfuse.corp.example.com/*",
+        "saml.assertion.signature": "false",
+        "saml.client.signature": "false",
+        "saml.encrypt": "false",
+        "saml.force.post.binding": "false",
+        "saml.server.signature": "false",
+        "saml_server_signature": "false",
+        "token.response.type.bearer.lower-case": "false",
+        "use.refresh.tokens": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-roles-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "client-id-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientId",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientId",
+            "jsonType.label": "String"
+          }
+        }
+      ],
+      "authorizationServicesEnabled": false
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "groups",
+      "description": "Членство в группах Keycloak",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "profile",
+      "description": "Базовый профиль пользователя",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "${profileScopeConsentText}"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "id": "user-profile-provider",
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {}
+      }
+    ]
+  },
+  "internationalizationEnabled": false,
+  "supportedLocales": [
+    "ru",
+    "en"
+  ],
+  "defaultLocale": "ru",
+  "authenticationFlows": [],
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xXSSProtection": "1; mode=block",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  },
+  "smtpServer": {},
+  "eventsEnabled": true,
+  "eventsListeners": [
+    "jboss-logging"
+  ],
+  "enabledEventTypes": [
+    "LOGIN",
+    "LOGIN_ERROR",
+    "LOGOUT",
+    "CODE_TO_TOKEN",
+    "CODE_TO_TOKEN_ERROR",
+    "CLIENT_LOGIN",
+    "CLIENT_LOGIN_ERROR",
+    "REFRESH_TOKEN",
+    "REFRESH_TOKEN_ERROR",
+    "REGISTER",
+    "REGISTER_ERROR"
+  ],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "identityProviders": [],
+  "identityFederationEnabled": false,
+  "userManagedAccessAllowed": false,
+  "clientOfflineSessionIdleTimeout": 0,
+  "clientOfflineSessionMaxLifespan": 0,
+  "clientSessionIdleTimeout": 0,
+  "clientSessionMaxLifespan": 0
+}
