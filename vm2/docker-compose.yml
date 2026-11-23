@@ -1,10 +1,7 @@
 # vm2/docker-compose.yml
 # ==============================================================================
 # docker-compose.yml — ВМ №2: Вычисления, песочницы, данные агентов
-# Production Blueprint v5.2
 # ==============================================================================
-# Кодировка: UTF-8 без BOM, окончания строк LF.
-#
 # Состав:
 #   - Worker / LangGraph (единый Python-образ с Gateway, entrypoint: taskiq worker)
 #   - PostgreSQL / pgvector — Runtime & RAG (TLS включён)

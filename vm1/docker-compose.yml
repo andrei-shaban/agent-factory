@@ -1,7 +1,6 @@
 # vm1/docker-compose.yml
 # ==============================================================================
 # docker-compose.yml — ВМ №1: Периметр, шлюзы, observability, зеркала
-# Production Blueprint v5.2
 # ==============================================================================
 #
 # Состав:
@@ -28,16 +27,17 @@ services:
   # INGRESS / SSE-PROXY
   # ============================================================================
   nginx:
-    image: nginx:1.28-alpine  # pin digest from mirror
+    image: nginx:1.31.9-alpine  # pin digest from mirror
     container_name: vm1-nginx
     restart: unless-stopped
     ports:
       - "443:443"
       - "80:80"
+    command: ["nginx", "-c", "/etc/nginx-runtime/nginx.conf", "-g", "daemon off;"]
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
-      - ./spa/dist:/usr/share/nginx/html:ro
+      - nginx-runtime-config:/etc/nginx-runtime:ro
+      - nginx-tls:/etc/nginx/certs:ro
+      - spa-dist:/usr/share/nginx/html:ro
       - nginx-cache:/var/cache/nginx
       - nginx-logs:/var/log/nginx
     environment:
@@ -48,7 +48,9 @@ services:
       gateway:
         condition: service_started
     networks:
-      - frontend
+      frontend:
+        aliases:
+          - langfuse.corp.example.com
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/health"]
       interval: 30s
@@ -70,26 +72,26 @@ services:
     container_name: vm1-oauth2-proxy
     restart: unless-stopped
     command:
-      - --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+      - --config=/etc/oauth2-proxy-config/oauth2-proxy.cfg
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      - --provider-ca-file=/etc/oauth2-proxy-certs/ca.crt
+      - --insecure-oidc-skip-issuer-verification
     environment:
       # Нативные переменные окружения (имеют приоритет над cfg)
       OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
       OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
-      OAUTH2_PROXY_OIDC_ISSUER_URL: ${OAUTH2_PROXY_OIDC_ISSUER_URL}
+      OAUTH2_PROXY_OIDC_ISSUER_URL: http://keycloak:8080/auth/realms/factory
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
-      - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
+      - oauth2-proxy-config:/etc/oauth2-proxy-config:ro
+      - nginx-tls:/etc/oauth2-proxy-certs:ro
     depends_on:
       keycloak:
         condition: service_healthy
     networks:
       - frontend
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:4180/ping"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    # OAuth2-proxy image is distroless; probe it from host/network diagnostics.
     logging:
       driver: json-file
       options:
@@ -107,7 +109,6 @@ services:
     restart: unless-stopped
     command:
       - start
-      - --optimized
       - --proxy-headers=xforwarded
       - --hostname-strict=false
       - --import-realm
@@ -117,6 +118,7 @@ services:
       KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
       KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /auth
       KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}  # https://factory.corp.example.com/auth
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
@@ -124,16 +126,18 @@ services:
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
       # Отрендеренный realm (см. render-configs.sh): подстановка секрета клиента
-      - ./rendered/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloak-import:/opt/keycloak/data/import:ro
     depends_on:
       postgres-auth:
         condition: service_healthy
     networks:
-      - frontend
-      - internal
+      frontend:
+        aliases:
+          - factory.corp.example.com
+      internal: {}
     healthcheck:
-      # С учётом KC_HTTP_RELATIVE_PATH=/auth health-эндпоинт = /auth/health/ready
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; grep -q '200 OK' <&3"]
+      # Health endpoint Keycloak доступен на management-порту 9000.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -151,12 +155,14 @@ services:
   # Пароли подставляются в init-скрипт (.sql.sh) через эти переменные окружения.
   # ============================================================================
   postgres-auth:
-    image: postgres:17-alpine  # pin digest from mirror
+    image: postgres:17-bookworm  # Debian base includes locale support
     container_name: vm1-postgres-auth
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_AUTH_USER}
       POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD}
+      # POSTGRES_USER используется официальным init-entrypoint и нашим init-скриптом.
+      POSTGRES_AUTH_USER: ${POSTGRES_AUTH_USER}
       POSTGRES_DB: postgres
       # Креды для init-скрипта (исполняется с доступом к этим переменным)
       KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER}
@@ -164,10 +170,13 @@ services:
       LANGFUSE_DB_USER: ${LANGFUSE_DB_USER}
       LANGFUSE_DB_PASSWORD: ${LANGFUSE_DB_PASSWORD}
       TZ: ${TZ:-Asia/Yekaterinburg}
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      POSTGRES_INITDB_ARGS: --locale=C.UTF-8
     volumes:
       - postgres-auth-data:/var/lib/postgresql/data
-      # .sql.sh исполняется официальным образом с переменными окружения
-      - ./init-db/01-create-databases.sql.sh:/docker-entrypoint-initdb.d/01-create-databases.sql.sh:ro
+      # Официальный образ исполняет *.sh из этого каталога при первой инициализации PGDATA.
+      - postgres-init:/docker-entrypoint-initdb.d:ro
     networks:
       - internal
     healthcheck:
@@ -206,6 +215,8 @@ services:
       - "on"
       - ">${REDIS_LANGFUSE_ACL_PASSWORD}"
       - "~langfuse:*"
+      - "~bull:*"
+      - "~LOCK:*"
       - "+@all"
     environment:
       TZ: ${TZ:-Asia/Yekaterinburg}
@@ -234,14 +245,17 @@ services:
     container_name: vm1-langfuse-web
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD}@postgres-auth:5432/langfuse
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD_URLENCODED}@postgres-auth:5432/langfuse
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
       NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL}  # https://langfuse.corp.example.com
+      HOSTNAME: 0.0.0.0
       SALT: ${LANGFUSE_SALT}
       CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD_URLENCODED}@clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-      REDIS_CONNECTION_STRING: redis://:${REDIS_LANGFUSE_ACL_PASSWORD}@redis-langfuse:6379
+      REDIS_CONNECTION_STRING: redis://langfuse_svc:${REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED}@redis-langfuse:6379
       LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://${VM2_HOST_IP}:8333
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
@@ -286,12 +300,14 @@ services:
     container_name: vm1-langfuse-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD}@postgres-auth:5432/langfuse
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD_URLENCODED}@postgres-auth:5432/langfuse
       SALT: ${LANGFUSE_SALT}
       CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD_URLENCODED}@clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-      REDIS_CONNECTION_STRING: redis://:${REDIS_LANGFUSE_ACL_PASSWORD}@redis-langfuse:6379
+      REDIS_CONNECTION_STRING: redis://langfuse_svc:${REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED}@redis-langfuse:6379
       LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://${VM2_HOST_IP}:8333
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
@@ -354,7 +370,7 @@ services:
   # Порт 8080 публикуется на VM1_HOST_IP — доступ только с ВМ №2 (по МЭ).
   # ============================================================================
   pypiserver:
-    image: pypiserver/pypiserver:v2.3.2  # сверить тег с инвентаризацией зеркала; в проде — pin по digest (SBOM)
+    image: pypiserver/pypiserver:v2.4.3  # сверить тег с инвентаризацией зеркала; в проде — pin по digest (SBOM)
     container_name: vm1-pypiserver
     restart: unless-stopped
     command:
@@ -369,7 +385,7 @@ services:
       # Загрузка wheels воркером ВМ №2 (маршрут ВМ №2 → ВМ №1:8080, по МЭ)
       - "${VM1_HOST_IP}:8080:8080"
     volumes:
-      - ./pypiserver/packages:/data/packages
+      - pypiserver-packages:/data/packages
     networks:
       - internal
     healthcheck:
@@ -393,6 +409,9 @@ services:
   # ============================================================================
   gateway:
     image: factory/gateway:latest
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
     container_name: vm1-gateway
     restart: unless-stopped
     environment:
@@ -400,20 +419,19 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Межсерверные маршруты к ВМ №2 (Blueprint §4)
       # Адрес ВМ №2 задаётся переменной VM2_HOST_IP в .env
-      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@${VM2_HOST_IP}:6379
+      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD_URLENCODED}@${VM2_HOST_IP}:6379
       REDIS_FACTORY_TLS: "true"
-      # Схема postgresql+ssl:// с sslmode=require — для TLS-подключения к ВМ №2 (Blueprint §3.1)
-      POSTGRES_RUNTIME_URL: postgresql+ssl://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD}@${VM2_HOST_IP}:5432/factory?sslmode=require
+      POSTGRES_RUNTIME_URL: postgresql://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD_URLENCODED}@${VM2_HOST_IP}:5432/factory?sslmode=require
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse-web:3000
       # Указываем напрямую на смонтированный CA-файл
-      SSL_CERT_FILE: /etc/ssl/certs/corp-ca.crt
-      REQUESTS_CA_BUNDLE: /etc/ssl/certs/corp-ca.crt
+      SSL_CERT_FILE: /run/certs/ca.crt
+      REQUESTS_CA_BUNDLE: /run/certs/ca.crt
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
-      # Монтирование корпоративного Root CA (принцип автономности §1.8)
-      - ./certs/corp-ca.crt:/etc/ssl/certs/corp-ca.crt:ro
+      # Единый каталог сертификатов VM1; ca.crt служит доверенным корнем для Gateway.
+      - gateway-ca:/run/certs:ro
     depends_on:
       langfuse-web:
         condition: service_healthy
@@ -445,6 +463,14 @@ networks:
 # VOLUMES
 # ==============================================================================
 volumes:
+  nginx-runtime-config:
+  nginx-tls:
+  spa-dist:
+  oauth2-proxy-config:
+  keycloak-import:
+  postgres-init:
+  gateway-ca:
+  pypiserver-packages:
   postgres-auth-data:
   redis-langfuse-data:
   clickhouse-data:

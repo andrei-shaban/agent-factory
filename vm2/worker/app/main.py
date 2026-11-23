@@ -4,14 +4,11 @@ Production Blueprint v5.2 — ВМ №2
 
 Назначение:
   - Настройка хуков жизненного цикла брокера (startup/shutdown).
+  - Инициализация LangGraph Checkpoint Saver (PostgreSQL).
   - Инициализация пулов соединений и внешних клиентов.
   - Импорт модулей с задачами для их регистрации в брокере.
 
-Важно: В docker-compose.yml entrypoint должен указывать на этот модуль:
-  taskiq worker app.main:broker --fs-discover --tasks-module app.tasks
-(или просто app.main:broker, так как задачи импортируются здесь).
 """
-
 import structlog
 from taskiq import TaskiqState
 
@@ -19,9 +16,11 @@ from worker.app.broker import broker
 from worker.app.integrations import corp_pg_client, gpu_client, s3_client
 from worker.app.settings import get_settings
 
-# Импортируем задачи и реестр графов, чтобы они зарегистрировались в брокере
+# Импортируем задачи и реестр графов, чтобы они зарегистрировались в брокере.
+# document_processing.py при импорте вызывает graph_registry.register(...).
 from worker.app import tasks  # noqa: F401
-from worker.app.graphs import registry  # noqa: F401
+from worker.app.graphs import document_processing  # noqa: F401  (side-effect: регистрация графа)
+from worker.app.graphs.registry import graph_registry
 
 logger = structlog.get_logger()
 
@@ -33,24 +32,23 @@ async def startup(state: TaskiqState) -> None:
     Выполняется один раз при запуске процесса worker.
     """
     settings = get_settings()
-    log = logger.bind(environment=settings.environment, worker_id=state.worker_id)
+    log = logger.bind(environment=settings.environment, worker_id=getattr(state, "worker_id", "unknown"))
     log.info("Worker startup initiated")
 
-    # 1. Инициализация внешних клиентов (ленивая, но можно форсировать)
-    # gpu_client, s3_client, corp_pg_client создадут подключения при первом вызове.
-    # Если нужна явная проверка доступности — раскомментируйте тестовые запросы.
+    # 1. Инициализация LangGraph Checkpoint Saver (PostgreSQL)
+    # Blueprint §3.1: чекпоинты живут в PostgreSQL ВМ №2.
+    try:
+        await graph_registry.init_checkpointer()
+        log.info(
+            "LangGraph checkpointer initialized",
+            registered_graphs=graph_registry.list_graphs(),
+        )
+    except Exception as e:
+        log.error("Failed to initialize checkpointer", error=str(e), exc_info=True)
+        raise
 
-    # 2. Инициализация LangGraph Checkpoint Saver (PostgreSQL)
-    # TODO: await registry.init_checkpointer(settings.postgres_runtime_url)
-
-    # 3. Инициализация Langfuse (опционально, если SDK требует явного старта)
-    # from langfuse import Langfuse
-    # state.langfuse = Langfuse(
-    #     public_key=settings.langfuse_public_key,
-    #     secret_key=settings.langfuse_secret_key,
-    #     host=settings.langfuse_host,
-    # )
-
+    # 2. Ленивая инициализация внешних клиентов (первый вызов создаст подключения)
+    # gpu_client, s3_client, corp_pg_client — создадут подключения при первом вызове.
     log.info("Worker startup completed successfully")
 
 
@@ -64,17 +62,14 @@ async def shutdown(state: TaskiqState) -> None:
     log.info("Worker shutdown initiated")
 
     try:
-        # Закрытие HTTP-клиентов и пулов соединений
+        # 1. Закрытие LangGraph Checkpoint Saver (PostgreSQL pool)
+        await graph_registry.close_checkpointer()
+
+        # 2. Закрытие HTTP-клиентов и пулов соединений
         await gpu_client.close()
         await corp_pg_client.close()
-
-        # TODO: Закрытие LangGraph Checkpoint Saver
-        # await registry.close_checkpointer()
-
-        # TODO: Flush Langfuse traces
-        # if hasattr(state, "langfuse") and state.langfuse:
-        #     state.langfuse.flush()
+        # s3_client — boto3, не требует явного закрытия
 
         log.info("Worker shutdown completed successfully")
     except Exception as e:
-        log.error("Error during worker shutdown", error=str(e))
+        log.error("Error during worker shutdown", error=str(e), exc_info=True)

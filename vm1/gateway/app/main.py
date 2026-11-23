@@ -182,11 +182,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting AG-UI Gateway", environment=settings.environment)
 
     # Redis connection pool
+    # redis:// or rediss:// selects plaintext/TLS. Do not pass redis-py ssl kwargs,
+    # which are incompatible with the pinned Redis 8 client.
     app.state.redis = redis.from_url(
         settings.redis_factory_url,
         decode_responses=True,
-        ssl=settings.redis_factory_tls,
-        ssl_cert_reqs="required",
     )
 
     # Проверка подключения к Redis

@@ -3,44 +3,62 @@ Graph Registry — Реестр и оркестратор графов LangGraph
 Production Blueprint v5.2 — ВМ №2
 
 Назначение:
-  - Регистрация скомпилированных графов по имени.
-  - Запуск графов с поддержкой checkpoint'ов в PostgreSQL.
-  - Обработка HITL-пауз (interrupt).
-  - Интеграция с Langfuse для трейсинга.
+  - Регистрация графов (StateGraph) по имени.
+  - Компиляция графа с PostgresSaver (чекпоинты в PostgreSQL).
+  - Запуск графа с поддержкой checkpoint'ов.
+  - Обработка HITL-пауз (interrupt) и resume.
+  - Интеграция с Langfuse для трейсинга (опционально, на уровне вызывающего кода).
 """
-
 import uuid
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 import structlog
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import StateGraph
+from psycopg_pool import AsyncConnectionPool
 
 from worker.app.settings import Settings, get_settings
 
 logger = structlog.get_logger()
 
 
+def _normalize_pg_url(url: str) -> str:
+    """
+    Нормализация URL для psycopg 3.
+    psycopg 3 понимает схемы: postgresql://, postgres://
+    Не понимает: postgresql+asyncpg://, postgresql+ssl://
+    """
+    if url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    elif url.startswith("postgresql+ssl://"):
+        url = url.replace("postgresql+ssl://", "postgresql://", 1)
+        if "sslmode=" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}sslmode=require"
+    return url
+
+
 class GraphRegistry:
     """
     Реестр графов LangGraph.
-
-    Хранит скомпилированные графы и управляет их выполнением
-    с checkpoint'ами в PostgreSQL.
+    Хранит StateGraph'ы и управляет их выполнением
+    с checkpoint'ами в PostgreSQL через AsyncPostgresSaver.
     """
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
         self._graphs: Dict[str, StateGraph] = {}
-        self._checkpoint_saver: Optional[PostgresSaver] = None
+        self._pool: Optional[AsyncConnectionPool] = None
+        self._checkpointer: Optional[AsyncPostgresSaver] = None
+
+    # ==========================================================================
+    # РЕГИСТРАЦИЯ ГРАФОВ
+    # ==========================================================================
 
     def register(self, name: str, graph: StateGraph) -> None:
         """
-        Регистрация скомпилированного графа.
-
-        Args:
-            name: Уникальное имя графа (например, 'document_processing').
-            graph: Скомпилированный граф LangGraph.
+        Регистрация StateGraph.
+        Граф компилируется с checkpointer'ом только в момент запуска (run/resume).
         """
         if name in self._graphs:
             logger.warning("Graph already registered, overwriting", graph_name=name)
@@ -48,113 +66,133 @@ class GraphRegistry:
         logger.info("Graph registered", graph_name=name)
 
     def get(self, name: str) -> Optional[StateGraph]:
-        """Получение графа по имени."""
         return self._graphs.get(name)
 
     def list_graphs(self) -> list[str]:
-        """Список зарегистрированных графов."""
         return list(self._graphs.keys())
 
-    async def _get_checkpoint_saver(self) -> PostgresSaver:
-        """Ленивая инициализация checkpoint saver (PostgreSQL)."""
-        if self._checkpoint_saver is None:
-            # TODO: Инициализация PostgresSaver с URL из settings
-            # from psycopg_pool import AsyncConnectionPool
-            # pool = AsyncConnectionPool(self.settings.postgres_runtime_url)
-            # self._checkpoint_saver = PostgresSaver(pool)
-            # await self._checkpoint_saver.setup()
-            logger.info("Checkpoint saver initialized (mock)")
-            # Заглушка до реализации
-            raise NotImplementedError("PostgresSaver not yet implemented")
-        return self._checkpoint_saver
+    # ==========================================================================
+    # CHECKPOINTER (PostgreSQL)
+    # ==========================================================================
+
+    async def init_checkpointer(self) -> None:
+        """
+        Инициализация пула соединений и AsyncPostgresSaver.
+        Blueprint §3.1: autocommit=True, prepare_threshold=0.
+        Blueprint §3.6: psycopg_pool 3.3.9.
+        """
+        if self._checkpointer is not None:
+            logger.debug("Checkpointer already initialized")
+            return
+
+        conninfo = _normalize_pg_url(self.settings.postgres_runtime_url)
+        logger.info("Initializing PostgresSaver", url=conninfo.split("@")[-1] if "@" in conninfo else conninfo)
+
+        self._pool = AsyncConnectionPool(
+            conninfo=conninfo,
+            min_size=2,
+            max_size=10,
+            timeout=30,
+            kwargs={
+                "autocommit": True,
+                "prepare_threshold": 0,
+            },
+        )
+        await self._pool.open()
+
+        self._checkpointer = AsyncPostgresSaver(self._pool)
+        await self._checkpointer.setup()
+        logger.info("PostgresSaver initialized and schema ready")
+
+    async def close_checkpointer(self) -> None:
+        """Закрытие пула соединений при graceful shutdown."""
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+            self._checkpointer = None
+            logger.info("PostgresSaver closed")
+
+    # ==========================================================================
+    # ЗАПУСК ГРАФА
+    # ==========================================================================
 
     async def run(
-            self,
-            graph_name: str,
-            initial_state: Dict[str, Any],
-            thread_id: str,
-            run_id: Optional[str] = None,
-            interrupt_before: Optional[list[str]] = None,
-            interrupt_after: Optional[list[str]] = None,
+        self,
+        graph_name: str,
+        initial_state: Dict[str, Any],
+        thread_id: str,
+        run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Запуск графа с checkpoint'ами.
-
-        Args:
-            graph_name: Имя зарегистрированного графа.
-            initial_state: Начальное состояние.
-            thread_id: Идентификатор треда (для checkpoint'ов).
-            run_id: Идентификатор запуска (для Langfuse trace).
-            interrupt_before: Узлы, перед которыми делать паузу (HITL).
-            interrupt_after: Узлы, после которых делать паузу (HITL).
-
-        Returns:
-            Финальное состояние графа.
+        Запуск графа с checkpoint'ами в PostgreSQL.
+        Если граф останавливается на interrupt() (HITL), выполнение приостанавливается,
+        состояние сохраняется в PG, и метод возвращает текущее состояние.
         """
         graph = self.get(graph_name)
-        if not graph:
+        if graph is None:
             raise ValueError(f"Graph '{graph_name}' not found in registry")
+
+        if self._checkpointer is None:
+            await self.init_checkpointer()
 
         run_id = run_id or str(uuid.uuid4())
         log = logger.bind(run_id=run_id, thread_id=thread_id, graph=graph_name)
         log.info("Starting graph execution")
 
-        # TODO: Инициализация Langfuse trace
-        # from langfuse import Langfuse
-        # langfuse = Langfuse(
-        #     public_key=self.settings.langfuse_public_key,
-        #     secret_key=self.settings.langfuse_secret_key,
-        #     host=self.settings.langfuse_host,
-        # )
-        # trace = langfuse.trace(name=graph_name, id=run_id, session_id=thread_id)
+        # Компиляция графа с checkpointer'ом
+        compiled = graph.compile(checkpointer=self._checkpointer)
+        config = {"configurable": {"thread_id": thread_id}}
 
-        # TODO: Получение checkpoint saver
-        # checkpointer = await self._get_checkpoint_saver()
+        try:
+            final_state = await compiled.ainvoke(initial_state, config)
+            status = final_state.get("status", "unknown")
+            log.info("Graph execution finished", status=status)
+            return final_state
+        except Exception as e:
+            log.error("Graph execution failed", error=str(e), exc_info=True)
+            raise
 
-        # TODO: Компиляция графа с checkpointer
-        # compiled_graph = graph.compile(checkpointer=checkpointer)
-
-        # TODO: Запуск графа
-        # config = {
-        #     "configurable": {"thread_id": thread_id},
-        #     "interrupt_before": interrupt_before,
-        #     "interrupt_after": interrupt_after,
-        # }
-        # final_state = await compiled_graph.ainvoke(initial_state, config)
-
-        # Заглушка до реализации
-        log.info("Graph execution finished (mock)")
-        return initial_state
+    # ==========================================================================
+    # RESUME ПОСЛЕ HITL
+    # ==========================================================================
 
     async def resume(
-            self,
-            graph_name: str,
-            thread_id: str,
-            human_response: Dict[str, Any],
-            run_id: Optional[str] = None,
+        self,
+        graph_name: str,
+        thread_id: str,
+        human_response: Dict[str, Any],
+        run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Возобновление графа после HITL-паузы.
-
-        Args:
-            graph_name: Имя графа.
-            thread_id: Идентификатор треда.
-            human_response: Данные от человека.
-            run_id: Идентификатор запуска.
-
-        Returns:
-            Финальное состояние после возобновления.
+        LangGraph восстанавливает состояние из checkpoint'а по thread_id
+        и передаёт human_response в точку прерывания.
         """
+        graph = self.get(graph_name)
+        if graph is None:
+            raise ValueError(f"Graph '{graph_name}' not found in registry")
+
+        if self._checkpointer is None:
+            await self.init_checkpointer()
+
+        run_id = run_id or str(uuid.uuid4())
         log = logger.bind(run_id=run_id, thread_id=thread_id, graph=graph_name)
         log.info("Resuming graph after HITL")
 
-        # TODO: Загрузка состояния из checkpoint
-        # TODO: Вызов graph.ainvoke(human_response, config)
-        # TODO: Запись решения в interrupt_decisions (PostgreSQL)
+        compiled = graph.compile(checkpointer=self._checkpointer)
+        config = {"configurable": {"thread_id": thread_id}}
 
-        log.info("Graph resumed successfully (mock)")
-        return human_response
+        try:
+            # LangGraph resume: передаём human_response как новый input
+            # граф восстановит состояние из checkpoint и продолжит выполнение
+            final_state = await compiled.ainvoke(human_response, config)
+            status = final_state.get("status", "unknown")
+            log.info("Graph resumed successfully", status=status)
+            return final_state
+        except Exception as e:
+            log.error("Graph resume failed", error=str(e), exc_info=True)
+            raise
 
 
-# Глобальный экземпляр реестра
+# Глобальный экземпляр реестра (singleton)
 graph_registry = GraphRegistry()
