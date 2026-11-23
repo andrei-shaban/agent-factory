@@ -1,6 +1,0 @@
-basicConstraints=critical,CA:FALSE
-keyUsage=critical,digitalSignature,keyAgreement
-extendedKeyUsage=serverAuth
-subjectKeyIdentifier=hash
-authorityKeyIdentifier=keyid,issuer
-subjectAltName=DNS:factory.corp.example.com,DNS:langfuse.corp.example.com
