@@ -100,6 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_contract_registry_owner ON contract_registry(owne
 CREATE INDEX IF NOT EXISTS idx_contract_registry_valid ON contract_registry(valid_from, valid_to);
 
 -- Триггер автообновления updated_at
+DROP TRIGGER IF EXISTS trigger_contract_registry_updated_at ON contract_registry;
 CREATE TRIGGER trigger_contract_registry_updated_at
     BEFORE UPDATE ON contract_registry
     FOR EACH ROW
@@ -141,6 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_toolset_catalog_status ON toolset_catalog(status)
 -- GIN-индекс для поиска по библиотекам
 CREATE INDEX IF NOT EXISTS idx_toolset_catalog_libraries ON toolset_catalog USING GIN (libraries);
 
+DROP TRIGGER IF EXISTS trigger_toolset_catalog_updated_at ON toolset_catalog;
 CREATE TRIGGER trigger_toolset_catalog_updated_at
     BEFORE UPDATE ON toolset_catalog
     FOR EACH ROW
@@ -352,7 +354,7 @@ SELECT
     r.run_id,
     r.thread_id,
     r.status,
-    r.user_id,
+    r."user" AS user_id,
     r.graph_version,
     r.created_at,
     r.updated_at,

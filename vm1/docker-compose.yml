@@ -76,6 +76,11 @@ services:
         aliases:
           - factory.corp.example.com
           - langfuse.corp.example.com
+      cross-vm:
+        aliases:
+          - factory.corp.example.com
+          - langfuse.corp.example.com
+          - langfuse-ingest.corp.example.com
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/health"]
       interval: 30s
@@ -279,7 +284,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       REDIS_CONNECTION_STRING: redis://langfuse_svc:${REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED}@redis-langfuse:6379
       LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://${VM2_HOST_IP}:8333
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT}
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
@@ -300,6 +305,7 @@ services:
     networks:
       - frontend
       - internal
+      - cross-vm
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/public/health"]
       interval: 30s
@@ -330,7 +336,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       REDIS_CONNECTION_STRING: redis://langfuse_svc:${REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED}@redis-langfuse:6379
       LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://${VM2_HOST_IP}:8333
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT}
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
@@ -347,6 +353,7 @@ services:
         condition: service_healthy
     networks:
       - internal
+      - cross-vm
     logging:
       driver: json-file
       options:
@@ -409,6 +416,7 @@ services:
       - ./pypiserver/packages:/data/packages
     networks:
       - internal
+      - cross-vm
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
       interval: 30s
@@ -437,10 +445,10 @@ services:
       ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Межсерверные маршруты к ВМ №2 (Blueprint §4)
-      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD_URLENCODED}@${VM2_HOST_IP}:6379
+      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD_URLENCODED}@redis-factory:6379/0?ssl_ca_certs=/run/certs/ca.crt
       REDIS_FACTORY_TLS: "true"
-      # psycopg3 понимает только postgresql:// — TLS задаётся через sslmode
-      POSTGRES_RUNTIME_URL: postgresql://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD_URLENCODED}@${VM2_HOST_IP}:5432/factory?sslmode=require
+      # Проверяем CA и hostname vm2-postgres из SAN сертификата VM2.
+      POSTGRES_RUNTIME_URL: postgresql://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD_URLENCODED}@vm2-postgres:5432/factory?sslmode=verify-full&sslrootcert=/run/certs/ca.crt
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse-web:3000
@@ -448,15 +456,19 @@ services:
       REQUESTS_CA_BUNDLE: /run/certs/ca.crt
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
-      # Корпоративный Root CA из централизованного хранилища
+      # Конфигурация/код Gateway и Root CA поставляются отдельно от образа.
+      - ./gateway/app:/app/app:ro
       - ../certs/ca/corp-ca.crt:/run/certs/ca.crt:ro
     depends_on:
       langfuse-web:
         condition: service_healthy
+      postgres-auth:
+        condition: service_healthy
     networks:
       - frontend
+      - cross-vm
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8000/health"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/health | grep -q healthy"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -476,6 +488,9 @@ networks:
   internal:
     driver: bridge
     internal: true
+  cross-vm:
+    name: factory-cross-vm
+    external: true
 
 # ==============================================================================
 # VOLUMES — только данные. Конфиги и сертификаты — через bind mounts.

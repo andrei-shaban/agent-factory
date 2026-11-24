@@ -63,10 +63,14 @@ load_env() {
         exit 1
     fi
     log_info "Загрузка переменных из $ENV_FILE"
-    # Экспортируем все переменные из .env (кроме комментариев и пустых строк)
+    # Source a normalized temporary copy so Windows CRLF lines do not execute stray CR tokens.
+    local normalized_env
+    normalized_env="$(mktemp)"
+    tr -d '\r' < "$ENV_FILE" > "$normalized_env"
     set -a
-    source "$ENV_FILE"
+    source "$normalized_env"
     set +a
+    rm -f "$normalized_env"
 }
 
 # Проверка наличия обязательных переменных
@@ -225,9 +229,9 @@ main() {
     local fail_count=0
     for file in "${FILES_TO_RENDER[@]}"; do
         if render_file "$file"; then
-            ((success_count++))
+            ((++success_count))
         else
-            ((fail_count++))
+            ((++fail_count))
         fi
     done
 
@@ -239,6 +243,17 @@ main() {
             clean_json_metadata "${RENDERED_DIR}/${file}"
         fi
     done
+    # SeaweedFS S3 IAM config accepts identities only; discard blueprint metadata and local bucket annotations.
+    python3 - "${RENDERED_DIR}/seaweedfs/s3.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    config = json.load(f)
+config = {k: v for k, v in config.items() if k in {"identities", "actions"}}
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(config, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
 
     log_info ""
     log_info "================================================================"

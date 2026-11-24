@@ -222,12 +222,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Taskiq broker (для постановки задач в Worker)
     app.state.broker = ListQueueBroker(url=settings.redis_factory_url)
-    app.state.broker.setup_schedule(
-        TaskiqScheduler(
-            broker=app.state.broker,
-            schedulers=[],
-        )
-    )
     logger.info("Taskiq broker initialized")
 
     # Langfuse client (для трейсинга операций Gateway)

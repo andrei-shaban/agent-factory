@@ -42,20 +42,24 @@ services:
     image: factory/gateway:latest
     container_name: vm2-worker
     restart: unless-stopped
-    entrypoint: ["taskiq", "worker", "worker.app.broker:broker", "--fs-discover", "--tasks-module", "worker.app.tasks"]
+    entrypoint: ["taskiq", "worker", "worker.app.broker:broker", "--fs-discover", "worker.app.tasks"]
     environment:
       ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-Asia/Yekaterinburg}
       # Redis фабрики — по TLS через Docker-сеть (порт 6379, TLS включён)
-      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@redis-factory:6379
+      REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@redis-factory:6379/0?ssl_ca_certs=/etc/certs/corp-ca.crt
+      REDIS_FACTORY_PASSWORD: ${REDIS_FACTORY_PASSWORD}
       REDIS_FACTORY_TLS: "true"
+      LANGFUSE_CA_CERT_PATH: /etc/certs/corp-ca.crt
+      LANGFUSE_CLIENT_CERT_PATH: /etc/certs/vm2-client.crt
+      LANGFUSE_CLIENT_KEY_PATH: /etc/certs/vm2-client.key
       # PostgreSQL Runtime — локально (без TLS, внутри Docker-сети)
-      POSTGRES_RUNTIME_URL: postgresql://${WORKER_DB_USER}:${WORKER_DB_PASSWORD}@postgres-runtime:5432/factory
+      POSTGRES_RUNTIME_URL: postgresql://${WORKER_DB_USER}:${WORKER_DB_PASSWORD}@vm2-postgres:5432/factory
       # Langfuse (ВМ №1)
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
-      LANGFUSE_HOST: ${LANGFUSE_HOST}
+      LANGFUSE_HOST: https://langfuse-ingest.corp.example.com
       # SeaweedFS S3 — локально
       SEAWEED_S3_ENDPOINT: http://seaweedfs-s3:8333
       SEAWEED_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -96,6 +100,7 @@ services:
       - ../certs/vm2/client/vm2-client.key:/etc/certs/vm2-client.key:ro
       # Корпоративный Root CA (для проверки серверных сертификатов GPU, ВМ №4)
       - ../certs/ca/corp-ca.crt:/etc/certs/corp-ca.crt:ro
+      - ../certs/ca/corp-ca.crt:/etc/certs/ca.crt:ro
       # Корпоративный Root CA для проверки TLS Redis (Worker подключается по rediss://)
       - ../certs/ca/corp-ca.crt:/etc/redis/tls/ca.crt:ro
       # Код Worker (принцип автономности артефактов, Blueprint §1.8).
@@ -114,10 +119,9 @@ services:
         condition: service_started
       docker-socket-proxy:
         condition: service_started
-    extra_hosts:
-      - "langfuse-ingest.corp.example.com:${VM1_HOST_IP}"
     networks:
       - internal
+      - cross-vm
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -143,6 +147,11 @@ services:
     container_name: vm2-postgres-runtime
     restart: unless-stopped
     # Жёсткое лимитирование памяти и WAL-архивация задаются флагами.
+    entrypoint:
+      - bash
+      - -ec
+      - install -o postgres -g postgres -m 0600 /etc/certs/pg-server.key /tmp/pg-server.key; exec docker-entrypoint.sh "$@"
+      - --
     command:
       - postgres
       - -c
@@ -171,13 +180,19 @@ services:
       - -c
       - ssl_cert_file=/etc/certs/pg-server.crt
       - -c
-      - ssl_key_file=/etc/certs/pg-server.key
+      - ssl_key_file=/tmp/pg-server.key
       - -c
       - ssl_ca_file=/etc/certs/corp-ca.crt
     environment:
       POSTGRES_USER: ${POSTGRES_RUNTIME_USER}
       POSTGRES_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD}
-      POSTGRES_DB: factory
+      POSTGRES_DB: postgres
+      FACTORY_DB_USER: ${FACTORY_DB_USER}
+      FACTORY_DB_PASSWORD: ${FACTORY_DB_PASSWORD}
+      WORKER_DB_USER: ${WORKER_DB_USER}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD}
+      GATEWAY_DB_USER: ${GATEWAY_DB_USER}
+      GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
       TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
@@ -185,7 +200,7 @@ services:
       - "${VM2_HOST_IP}:5432:5432"
     volumes:
       - postgres-runtime-data:/var/lib/postgresql/data
-      - ./init-db/01-create-databases.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
+      - ./init-db/01-create-databases.sql.sh:/docker-entrypoint-initdb.d/01-create-databases.sql.sh:ro
       - ./init-db/02-enable-extensions.sql:/docker-entrypoint-initdb.d/02-enable-extensions.sql:ro
       - ./init-db/03-create-tables.sql:/docker-entrypoint-initdb.d/03-create-tables.sql:ro
       - backups-wal-archive:/var/lib/postgresql/wal-archive
@@ -194,7 +209,12 @@ services:
       - ../certs/vm2/pg/pg-server.key:/etc/certs/pg-server.key:ro
       - ../certs/ca/corp-ca.crt:/etc/certs/corp-ca.crt:ro
     networks:
-      - internal
+      internal:
+        aliases:
+          - vm2-postgres
+      cross-vm:
+        aliases:
+          - vm2-postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_RUNTIME_USER} -d factory"]
       interval: 10s
@@ -219,6 +239,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     environment:
+      REDIS_FACTORY_PASSWORD: ${REDIS_FACTORY_PASSWORD}
       TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
       # TLS + ACL agui_svc для Gateway с ВМ №1 (порт 6379 — только TLS)
@@ -235,9 +256,10 @@ services:
       - redis-factory-data:/data
     networks:
       - internal
+      - cross-vm
     healthcheck:
       # Healthcheck через TLS (redis-cli с --tls и --cacert)
-      test: ["CMD-SHELL", "redis-cli --tls --cert /etc/redis/tls/redis.crt --key /etc/redis/tls/redis.key --cacert /etc/redis/tls/ca.crt -a \"$$REDIS_FACTORY_PASSWORD\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli --tls --cacert /etc/redis/tls/ca.crt --user default -a \"$$REDIS_FACTORY_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -333,7 +355,6 @@ services:
       - -defaultReplicaPlacement=${SEAWEED_REPLICATION:-001}
       - -collection=factory
       - -maxMB=4
-      - -dirListingLimit=10000
     volumes:
       - seaweedfs-filer-data:/data
       - ./seaweedfs/filer.toml:/etc/seaweedfs/filer.toml:ro
@@ -369,6 +390,10 @@ services:
       - -port=8333
       - -ip.bind=0.0.0.0
       - -config=/etc/seaweedfs/s3.json
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
       # S3 для Langfuse (ВМ №1) и воркеров; path-style обязателен
       - "${VM2_HOST_IP}:8333:8333"
@@ -379,6 +404,7 @@ services:
         condition: service_healthy
     networks:
       - internal
+      - cross-vm
     logging:
       driver: json-file
       options:
@@ -420,6 +446,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - internal
+      - cross-vm
     security_opt:
       - no-new-privileges:true
     logging:
@@ -434,8 +461,10 @@ services:
 networks:
   internal:
     driver: bridge
-    # internal: true не ставится: Worker нужен egress к GPU-ендпоинтам, ВМ №4,
-    # ВМ №1 (PyPI, Langfuse). Ограничение — матрицей маршрутов на межсетевом экране.
+    # Worker needs controlled egress to GPU/VM4.
+  cross-vm:
+    name: factory-cross-vm
+    external: true
 
 # ==============================================================================
 # VOLUMES — только данные. Конфиги и сертификаты — через bind mounts.

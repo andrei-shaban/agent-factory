@@ -22,6 +22,7 @@ import json
 import re
 import secrets
 import shutil
+import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
@@ -281,7 +282,7 @@ def render_file(
 # ИНИЦИАЛИЗАЦИЯ ВМ
 # ==============================================================================
 def init_vm1() -> Dict[str, str]:
-    """Инициализация ВМ №1. Возвращает словарь общих секретов для синхронизации с ВМ №2."""
+    """Initialize VM1 while preserving installed credentials and returning shared values."""
     log_step("Инициализация ВМ №1 (периметр, observability)")
 
     if not VM1_DIR.exists():
@@ -294,11 +295,20 @@ def init_vm1() -> Dict[str, str]:
         log_error("Скопируйте .env.example в .env и повторите.")
         sys.exit(1)
 
-    # 1. Генерация секретов
-    log_info("Генерация секретов ВМ №1...")
-    new_secrets = build_vm1_secrets()
+    # Preserve current credentials because database volumes and clients already use them.
+    existing = load_env(env_path)
+    generated = build_vm1_secrets()
+    new_secrets = {key: existing.get(key) or value for key, value in generated.items()}
+    for encoded_key, source_key in {
+        "CLICKHOUSE_PASSWORD_URLENCODED": "CLICKHOUSE_PASSWORD",
+        "REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED": "REDIS_LANGFUSE_ACL_PASSWORD",
+        "LANGFUSE_DB_PASSWORD_URLENCODED": "LANGFUSE_DB_PASSWORD",
+        "REDIS_FACTORY_ACL_PASSWORD_URLENCODED": "REDIS_FACTORY_ACL_PASSWORD",
+        "GATEWAY_DB_PASSWORD_URLENCODED": "GATEWAY_DB_PASSWORD",
+    }.items():
+        new_secrets[encoded_key] = urllib.parse.quote(new_secrets[source_key], safe="")
     replaced = update_env_file(env_path, new_secrets)
-    log_info(f"Обновлено секретов в vm1/.env: {replaced}")
+    log_info(f"Existing credentials preserved; initialized/synchronized {replaced} VM1 keys")
 
     # 2. Рендеринг конфигов
     log_info("Рендеринг конфигураций ВМ №1...")
@@ -334,18 +344,16 @@ def init_vm1() -> Dict[str, str]:
 
     log_info(f"ВМ №1 готова: {success_count} файлов отрендерено")
 
-    # Возвращаем общие секреты для синхронизации с ВМ №2
+    # Return actual existing shared credentials to synchronize VM2 without rotating them.
     shared_keys = {
-        "GATEWAY_DB_PASSWORD": new_secrets["GATEWAY_DB_PASSWORD"],
-        "REDIS_FACTORY_ACL_PASSWORD": new_secrets["REDIS_FACTORY_ACL_PASSWORD"],
-        "S3_ACCESS_KEY": new_secrets["S3_ACCESS_KEY"],
-        "S3_SECRET_KEY": new_secrets["S3_SECRET_KEY"],
+        key: env_vars[key]
+        for key in ("GATEWAY_DB_PASSWORD", "REDIS_FACTORY_ACL_PASSWORD", "S3_ACCESS_KEY", "S3_SECRET_KEY")
+        if env_vars.get(key)
     }
-    # LANGFUSE_* ключи могут быть ещё не заданы (создаются в UI), но если есть — берём
-    if env_vars.get("LANGFUSE_PUBLIC_KEY") and not env_vars["LANGFUSE_PUBLIC_KEY"].startswith("pk-lf-..."):
-        shared_keys["LANGFUSE_PUBLIC_KEY"] = env_vars["LANGFUSE_PUBLIC_KEY"]
-    if env_vars.get("LANGFUSE_SECRET_KEY") and not env_vars["LANGFUSE_SECRET_KEY"].startswith("sk-lf-..."):
-        shared_keys["LANGFUSE_SECRET_KEY"] = env_vars["LANGFUSE_SECRET_KEY"]
+    for key, placeholder in (("LANGFUSE_PUBLIC_KEY", "pk-lf-..."), ("LANGFUSE_SECRET_KEY", "sk-lf-...")):
+        value = env_vars.get(key, "")
+        if value and value != placeholder:
+            shared_keys[key] = value
 
     return shared_keys
 
@@ -365,10 +373,14 @@ def init_vm2(shared: Dict[str, str]) -> None:
         sys.exit(1)
 
     # 1. Генерация секретов с синхронизацией из ВМ №1
-    log_info("Генерация секретов ВМ №2 (с синхронизацией общих ключей из ВМ №1)...")
-    new_secrets = build_vm2_secrets(shared)
+    existing = load_env(env_path)
+    generated = build_vm2_secrets(shared)
+    new_secrets = {key: existing.get(key) or value for key, value in generated.items()}
+    for key in ("GATEWAY_DB_PASSWORD", "REDIS_FACTORY_ACL_PASSWORD", "S3_ACCESS_KEY", "S3_SECRET_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        if shared.get(key):
+            new_secrets[key] = shared[key]
     replaced = update_env_file(env_path, new_secrets)
-    log_info(f"Обновлено секретов в vm2/.env: {replaced}")
+    log_info(f"Preserved local credentials and synchronized shared VM2 keys: {replaced}")
 
     synced = [k for k in shared.keys() if k in new_secrets and shared[k] == new_secrets[k]]
     if synced:
