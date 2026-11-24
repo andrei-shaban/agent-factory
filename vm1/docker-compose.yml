@@ -1,6 +1,7 @@
 # vm1/docker-compose.yml
 # ==============================================================================
 # docker-compose.yml — ВМ №1: Периметр, шлюзы, observability, зеркала
+# Production Blueprint v5.2.1
 # ==============================================================================
 #
 # Состав:
@@ -12,32 +13,57 @@
 #   - PyPI mirror (доступ только с ВМ №2)
 #   - AG-UI Gateway (FastAPI)
 #
-# ВАЖНО перед первым стартом:
-#   1. Скопировать .env.example в .env и заполнить значения.
-#   2. Запустить ./render-configs.sh → создаст rendered/realm-export.json.
-#   3. Поместить корпоративный TLS-сертификат в nginx/certs/
-#      (SAN должен покрывать: factory.corp.example.com, langfuse.corp.example.com).
-#   4. Поместить статическую сборку SPA в spa/dist/.
-#   5. Задать VM1_HOST_IP и VM2_HOST_IP в .env.
+# ------------------------------------------------------------------------------
+# СЕРТИФИКАТЫ — централизованное хранилище F:\agent-factory\certs\
+# ------------------------------------------------------------------------------
+#   ../certs/ca/corp-ca.crt              — корпоративный Root CA (публичный)
+#   ../certs/vm1/nginx/server.crt|.key   — TLS nginx (SAN на оба домена)
+#
+# ------------------------------------------------------------------------------
+# ИНИЦИАЛИЗАЦИЯ БД — ВАЖНО
+# ------------------------------------------------------------------------------
+# Файл на хосте:      init-db/01-create-databases.sql   (содержимое — bash!)
+# Монтируется как:    /docker-entrypoint-initdb.d/01-create-databases.sql.sh
+#
+# Расширение .sh в целевом пути ОБЯЗАТЕЛЬНО: официальный entrypoint postgres
+# исполняет *.sh как bash-скрипт с доступом к переменным окружения
+# (KEYCLOAK_DB_*, LANGFUSE_DB_*). Файл *.sql исполняется как SQL и упадёт.
+#
+# Скрипты выполняются ТОЛЬКО при пустом PGDATA. Для переинициализации:
+#   docker compose down
+#   docker volume rm factory-vm1_postgres-auth-data
+#   docker compose up -d
+#
+# ------------------------------------------------------------------------------
+# ПОДГОТОВКА ПЕРЕД ПЕРВЫМ СТАРТОМ
+# ------------------------------------------------------------------------------
+#   1. cp .env.example .env && python rotate_secrets.py
+#   2. ./render-configs.sh   → rendered/realm-export.json
+#   3. Проверить ../certs/ (наличие и валидность сертификатов)
+#   4. Положить статику SPA в spa/dist/
+#   5. Задать VM1_HOST_IP и VM2_HOST_IP в .env
 #
 # ==============================================================================
+
 name: factory-vm1
+
 services:
   # ============================================================================
   # INGRESS / SSE-PROXY
   # ============================================================================
   nginx:
-    image: nginx:1.31.9-alpine  # pin digest from mirror
+    image: nginx:1.31.9-alpine
     container_name: vm1-nginx
     restart: unless-stopped
     ports:
       - "443:443"
       - "80:80"
-    command: ["nginx", "-c", "/etc/nginx-runtime/nginx.conf", "-g", "daemon off;"]
     volumes:
-      - nginx-runtime-config:/etc/nginx-runtime:ro
-      - nginx-tls:/etc/nginx/certs:ro
-      - spa-dist:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # TLS из централизованного хранилища (SAN: factory. + langfuse.)
+      - ../certs/vm1/nginx/server.crt:/etc/nginx/certs/server.crt:ro
+      - ../certs/vm1/nginx/server.key:/etc/nginx/certs/server.key:ro
+      - ./spa/dist:/usr/share/nginx/html:ro
       - nginx-cache:/var/cache/nginx
       - nginx-logs:/var/log/nginx
     environment:
@@ -50,6 +76,7 @@ services:
     networks:
       frontend:
         aliases:
+          - factory.corp.example.com
           - langfuse.corp.example.com
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/health"]
@@ -64,34 +91,33 @@ services:
 
   # ============================================================================
   # AUTH-PROXY (oauth2-proxy + Keycloak OIDC)
-  # Секреты передаются через environment (OAUTH2_PROXY_* — нативная поддержка),
+  # Секреты передаются через environment (нативная поддержка OAUTH2_PROXY_*),
   # а НЕ через ${...} в cfg — oauth2-proxy не раскрывает переменные в конфиге.
   # ============================================================================
   oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0  # pin digest from mirror
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
     container_name: vm1-oauth2-proxy
     restart: unless-stopped
     command:
-      - --config=/etc/oauth2-proxy-config/oauth2-proxy.cfg
-      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
-      - --provider-ca-file=/etc/oauth2-proxy-certs/ca.crt
+      - --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+      - --provider-ca-file=/etc/ssl/certs/corp-ca.crt
       - --insecure-oidc-skip-issuer-verification
     environment:
-      # Нативные переменные окружения (имеют приоритет над cfg)
       OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
       OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
-      OAUTH2_PROXY_OIDC_ISSUER_URL: http://keycloak:8080/auth/realms/factory
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${OAUTH2_PROXY_OIDC_ISSUER_URL}
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
-      - oauth2-proxy-config:/etc/oauth2-proxy-config:ro
-      - nginx-tls:/etc/oauth2-proxy-certs:ro
+      - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
+      - ../certs/ca/corp-ca.crt:/etc/ssl/certs/corp-ca.crt:ro
     depends_on:
       keycloak:
         condition: service_healthy
     networks:
       - frontend
-    # OAuth2-proxy image is distroless; probe it from host/network diagnostics.
+    # Образ distroless — healthcheck изнутри недоступен.
+    # Проверка: docker exec vm1-nginx wget -qO- http://oauth2-proxy:4180/ping
     logging:
       driver: json-file
       options:
@@ -104,7 +130,7 @@ services:
   # Realm импортируется из rendered/ при первом запуске (--import-realm).
   # ============================================================================
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0  # pin digest from mirror
+    image: quay.io/keycloak/keycloak:26.0
     container_name: vm1-keycloak
     restart: unless-stopped
     command:
@@ -120,24 +146,22 @@ services:
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /auth
-      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}  # https://factory.corp.example.com/auth
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
-      # Отрендеренный realm (см. render-configs.sh): подстановка секрета клиента
-      - keycloak-import:/opt/keycloak/data/import:ro
+      # Отрендеренный realm (подстановка секрета клиента — render-configs.sh)
+      - ./rendered/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     depends_on:
       postgres-auth:
         condition: service_healthy
     networks:
-      frontend:
-        aliases:
-          - factory.corp.example.com
-      internal: {}
+      - frontend
+      - internal
     healthcheck:
-      # Health endpoint Keycloak доступен на management-порту 9000.
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
+      # Management-порт 9000; health без префикса /auth (KC_HEALTH_ENABLED=true)
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -150,19 +174,18 @@ services:
 
   # ============================================================================
   # POSTGRESQL — AUTH & OBSERVABILITY (Keycloak + Langfuse DB)
-  # Доступен ТОЛЬКО контейнерам внутри ВМ №1. БД "factory" НЕ создаётся здесь
-  # (реестр ранов живёт на ВМ №2 — см. Blueprint §3.1).
-  # Пароли подставляются в init-скрипт (.sql.sh) через эти переменные окружения.
+  # Доступен ТОЛЬКО контейнерам внутри ВМ №1 (порт 5432 на хост не публикуется).
+  # БД "factory" здесь НЕ создаётся — реестр ранов живёт на ВМ №2 (Blueprint §3.1).
+  #
+  # Debian-база (bookworm) вместо alpine: поддержка локали C.UTF-8.
   # ============================================================================
   postgres-auth:
-    image: postgres:17-bookworm  # Debian base includes locale support
+    image: postgres:17-bookworm
     container_name: vm1-postgres-auth
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_AUTH_USER}
       POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD}
-      # POSTGRES_USER используется официальным init-entrypoint и нашим init-скриптом.
-      POSTGRES_AUTH_USER: ${POSTGRES_AUTH_USER}
       POSTGRES_DB: postgres
       # Креды для init-скрипта (исполняется с доступом к этим переменным)
       KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER}
@@ -175,15 +198,16 @@ services:
       POSTGRES_INITDB_ARGS: --locale=C.UTF-8
     volumes:
       - postgres-auth-data:/var/lib/postgresql/data
-      # Официальный образ исполняет *.sh из этого каталога при первой инициализации PGDATA.
-      - postgres-init:/docker-entrypoint-initdb.d:ro
+      # Хост: .sql (bash по содержимому) → контейнер: .sh (исполняется как bash)
+      - ./init-db/01-create-databases.sql.sh:/docker-entrypoint-initdb.d/01-create-databases.sql.sh:ro
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_AUTH_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_AUTH_USER} -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
     logging:
       driver: json-file
       options:
@@ -192,10 +216,11 @@ services:
 
   # ============================================================================
   # REDIS — LANGFUSE (инжест, BullMQ)
-  # noeviction, ACL langfuse_svc, доступен только контейнерам Langfuse
+  # noeviction — требование BullMQ.
+  # ACL langfuse_svc: паттерн ~* (BullMQ использует bull:*, LOCK:* и др. префиксы).
   # ============================================================================
   redis-langfuse:
-    image: redis:8-alpine  # pin digest from mirror
+    image: redis:8-alpine
     container_name: vm1-redis-langfuse
     restart: unless-stopped
     command:
@@ -214,9 +239,7 @@ services:
       - langfuse_svc
       - "on"
       - ">${REDIS_LANGFUSE_ACL_PASSWORD}"
-      - "~langfuse:*"
-      - "~bull:*"
-      - "~LOCK:*"
+      - "~*"
       - "+@all"
     environment:
       TZ: ${TZ:-Asia/Yekaterinburg}
@@ -236,21 +259,23 @@ services:
         max-file: "4"
 
   # ============================================================================
-  # LANGFUSE WEB (observability UI/API) — v4
-  # Порт 3000 не публикуется; внешний UI и ingest идут через отдельные vhost Nginx.
+  # LANGFUSE WEB (observability UI/API) — v4.82+
+  # UI: через nginx (langfuse.corp.example.com, отдельный vhost).
+  # Инжест: порт 3000 на VM1_HOST_IP для воркера ВМ №2 (ограничить на МЭ).
   # ============================================================================
   langfuse-web:
-    image: langfuse/langfuse:4  # v4.82+, pin digest from mirror
+    image: langfuse/langfuse:4
     container_name: vm1-langfuse-web
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD_URLENCODED}@postgres-auth:5432/langfuse
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
-      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL}  # https://langfuse.corp.example.com
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL}
       HOSTNAME: 0.0.0.0
       SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
       CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_MIGRATION_URL: clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD_URLENCODED}@clickhouse:9000
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
@@ -265,6 +290,8 @@ services:
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
       TZ: ${TZ:-Asia/Yekaterinburg}
+    ports:
+      - "${VM1_HOST_IP}:3000:3000"
     depends_on:
       postgres-auth:
         condition: service_healthy
@@ -280,7 +307,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 90s
     logging:
       driver: json-file
       options:
@@ -288,17 +315,18 @@ services:
         max-file: "4"
 
   # ============================================================================
-  # LANGFUSE WORKER (инжест трейсов) — v4
+  # LANGFUSE WORKER (инжест трейсов) — v4.82+
   # ============================================================================
   langfuse-worker:
-    image: langfuse/langfuse-worker:4  # v4.82+, pin digest from mirror
+    image: langfuse/langfuse-worker:4
     container_name: vm1-langfuse-worker
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD_URLENCODED}@postgres-auth:5432/langfuse
       SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
       CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_MIGRATION_URL: clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD_URLENCODED}@clickhouse:9000
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
@@ -328,16 +356,17 @@ services:
         max-file: "4"
 
   # ============================================================================
-  # CLICKHOUSE (трейсы и observations Langfuse) — 26.8 LTS (мин. 25.12)
+  # CLICKHOUSE (трейсы и observations Langfuse) — 26.8 LTS
   # ============================================================================
   clickhouse:
-    image: clickhouse/clickhouse-server:26.8-alpine  # pin digest from mirror
+    image: clickhouse/clickhouse-server:26.8-alpine
     container_name: vm1-clickhouse
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: langfuse
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
@@ -361,11 +390,11 @@ services:
         max-file: "4"
 
   # ============================================================================
-  # PYPI MIRROR (зеркало wheels для песочниц)
-  # Порт 8080 публикуется на VM1_HOST_IP — доступ только с ВМ №2 (по МЭ).
+  # PYPI MIRROR (зеркало wheels для песочниц ВМ №2)
+  # Порт 8080 на VM1_HOST_IP — доступ только с ВМ №2 (ограничить на МЭ).
   # ============================================================================
   pypiserver:
-    image: pypiserver/pypiserver:v2.4.3  # сверить тег с инвентаризацией зеркала; в проде — pin по digest (SBOM)
+    image: pypiserver/pypiserver:v2.4.3
     container_name: vm1-pypiserver
     restart: unless-stopped
     command:
@@ -377,10 +406,9 @@ services:
     environment:
       TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
-      # Загрузка wheels воркером ВМ №2 (маршрут ВМ №2 → ВМ №1:8080, по МЭ)
       - "${VM1_HOST_IP}:8080:8080"
     volumes:
-      - pypiserver-packages:/data/packages
+      - ./pypiserver/packages:/data/packages
     networks:
       - internal
     healthcheck:
@@ -396,11 +424,9 @@ services:
 
   # ============================================================================
   # AG-UI GATEWAY (FastAPI)
-  # Только сеть frontend: доступ к redis-langfuse/clickhouse/postgres-auth
+  # Только сеть frontend: доступ к redis-langfuse / clickhouse / postgres-auth
   # (internal) ему НЕ нужен — изоляция по Blueprint §3.1.
-  #
-  # Корпоративный Root CA монтируется через volume (не вшит в образ).
-  # Переменные SSL_CERT_FILE и REQUESTS_CA_BUNDLE указывают напрямую на смонтированный файл.
+  # Корпоративный Root CA монтируется через bind mount (не вшит в образ).
   # ============================================================================
   gateway:
     image: factory/gateway:latest
@@ -413,20 +439,18 @@ services:
       ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Межсерверные маршруты к ВМ №2 (Blueprint §4)
-      # Адрес ВМ №2 задаётся переменной VM2_HOST_IP в .env
       REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD_URLENCODED}@${VM2_HOST_IP}:6379
       REDIS_FACTORY_TLS: "true"
+      # psycopg3 понимает только postgresql:// — TLS задаётся через sslmode
       POSTGRES_RUNTIME_URL: postgresql://${GATEWAY_DB_USER}:${GATEWAY_DB_PASSWORD_URLENCODED}@${VM2_HOST_IP}:5432/factory?sslmode=require
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse-web:3000
-      # Указываем напрямую на смонтированный CA-файл
       SSL_CERT_FILE: /run/certs/ca.crt
       REQUESTS_CA_BUNDLE: /run/certs/ca.crt
       TZ: ${TZ:-Asia/Yekaterinburg}
     volumes:
-      # Единый каталог сертификатов VM1; ca.crt служит доверенным корнем для Gateway.
-      - gateway-ca:/run/certs:ro
+      - ../certs/ca/corp-ca.crt:/run/certs/ca.crt:ro
     depends_on:
       langfuse-web:
         condition: service_healthy
@@ -455,17 +479,9 @@ networks:
     internal: true
 
 # ==============================================================================
-# VOLUMES
+# VOLUMES — только данные. Конфиги и сертификаты — через bind mounts.
 # ==============================================================================
 volumes:
-  nginx-runtime-config:
-  nginx-tls:
-  spa-dist:
-  oauth2-proxy-config:
-  keycloak-import:
-  postgres-init:
-  gateway-ca:
-  pypiserver-packages:
   postgres-auth-data:
   redis-langfuse-data:
   clickhouse-data:

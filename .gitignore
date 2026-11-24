@@ -1,4 +1,5 @@
 /docker_images/
 /.venv/
-/vm1/certs/
+/certs/
 /vm2/certs/
+/certs/
