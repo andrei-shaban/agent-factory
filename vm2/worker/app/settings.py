@@ -50,7 +50,10 @@ class Settings(BaseSettings):
     # ==============================================================================
     langfuse_public_key: str = Field(default="", description="Langfuse Public Key")
     langfuse_secret_key: str = Field(default="", description="Langfuse Secret Key")
-    langfuse_host: str = Field(default="http://vm1-langfuse-web:3000", description="Langfuse Host")
+    langfuse_host: str = Field(default="https://langfuse-ingest.corp.example.com", description="Langfuse mTLS ingest endpoint")
+    langfuse_client_cert_path: str = Field(default="/etc/certs/vm2-client.crt")
+    langfuse_client_key_path: str = Field(default="/etc/certs/vm2-client.key")
+    langfuse_ca_cert_path: str = Field(default="/etc/certs/ca.crt")
 
     # ==============================================================================
     # SEAWEEDFS / S3 (ВМ №2)

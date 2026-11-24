@@ -48,7 +48,7 @@ services:
       # Langfuse (ВМ №1)
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
-      LANGFUSE_HOST: ${LANGFUSE_HOST}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://langfuse-ingest.corp.example.com}
       # SeaweedFS S3 — локально
       SEAWEED_S3_ENDPOINT: http://seaweedfs-s3:8333
       SEAWEED_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -85,9 +85,7 @@ services:
       TRANSFORMERS_OFFLINE: "1"
     volumes:
       # mTLS-сертификаты (монтируются из хостовой системы — принцип автономности)
-      - ./certs/corp-ca.crt:/etc/certs/corp-ca.crt:ro
-      - ./certs/vm2-client.crt:/etc/certs/vm2-client.crt:ro
-      - ./certs/vm2-client.key:/etc/certs/vm2-client.key:ro
+      - vm2-client-certs:/etc/certs:ro
       # Корпоративный Root CA для проверки TLS Redis (Worker подключается по rediss://)
       - ./certs/redis/ca.crt:/etc/redis/tls/ca.crt:ro
       # Код Worker (принцип автономности артефактов, Blueprint §1.8).
@@ -107,6 +105,8 @@ services:
         condition: service_started
       docker-socket-proxy:
         condition: service_started
+    extra_hosts:
+      - "langfuse-ingest.corp.example.com:${VM1_HOST_IP}"
     networks:
       - internal
     security_opt:
@@ -443,4 +443,5 @@ volumes:
   seaweedfs-filer-data:
   wheel-cache:
   worker-tmp:
+  vm2-client-certs:
   backups-wal-archive:

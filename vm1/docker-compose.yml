@@ -237,8 +237,7 @@ services:
 
   # ============================================================================
   # LANGFUSE WEB (observability UI/API) — v4
-  # Порт 3000 публикуется на VM1_HOST_IP для инжеста трейсов с ВМ №2
-  # (доступ только с ВМ №2 — ограничить матрицей на МЭ).
+  # Порт 3000 не публикуется; внешний UI и ingest идут через отдельные vhost Nginx.
   # ============================================================================
   langfuse-web:
     image: langfuse/langfuse:4  # v4.82+, pin digest from mirror
@@ -266,10 +265,6 @@ services:
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
       TZ: ${TZ:-Asia/Yekaterinburg}
-    ports:
-      # Инжест трейсов с ВМ №2 (worker шлёт по API-ключам, минуя oauth2-proxy).
-      # Источник запросов ограничить адресом ВМ №2 на межсетевом экране.
-      - "${VM1_HOST_IP}:3000:3000"
     depends_on:
       postgres-auth:
         condition: service_healthy

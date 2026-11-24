@@ -13,7 +13,7 @@ import structlog
 from taskiq import TaskiqState
 
 from worker.app.broker import broker
-from worker.app.integrations import corp_pg_client, gpu_client, s3_client
+from worker.app.integrations import corp_pg_client, gpu_client, langfuse_client, s3_client
 from worker.app.settings import get_settings
 
 # Импортируем задачи и реестр графов, чтобы они зарегистрировались в брокере.
@@ -68,6 +68,9 @@ async def shutdown(state: TaskiqState) -> None:
         # 2. Закрытие HTTP-клиентов и пулов соединений
         await gpu_client.close()
         await corp_pg_client.close()
+        # Flush Langfuse telemetry and close its shared mTLS HTTP client.
+        langfuse_client.flush()
+        await langfuse_client.close()
         # s3_client — boto3, не требует явного закрытия
 
         log.info("Worker shutdown completed successfully")

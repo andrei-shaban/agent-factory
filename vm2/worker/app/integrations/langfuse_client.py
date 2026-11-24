@@ -11,9 +11,9 @@ Production Blueprint v5.2 — ВМ №2
 Использует langfuse SDK (уже есть в зависимостях gateway/requirements.txt).
 """
 
-import os
 from typing import Any, Dict, Optional
 
+import httpx
 import structlog
 from langfuse import Langfuse
 
@@ -32,14 +32,22 @@ class LangfuseClient:
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
         self._client: Optional[Langfuse] = None
+        self._http_client: Optional[httpx.Client] = None
 
     def _get_client(self) -> Langfuse:
         """Ленивая инициализация Langfuse клиента."""
         if self._client is None:
+            self._http_client = httpx.Client(
+                verify=self.settings.langfuse_ca_cert_path,
+                cert=(self.settings.langfuse_client_cert_path, self.settings.langfuse_client_key_path),
+                timeout=30.0,
+                trust_env=False,
+            )
             self._client = Langfuse(
                 public_key=self.settings.langfuse_public_key,
                 secret_key=self.settings.langfuse_secret_key,
                 host=self.settings.langfuse_host,
+                httpx_client=self._http_client,
                 debug=False,
             )
             logger.info("Langfuse client initialized", host=self.settings.langfuse_host)
@@ -162,11 +170,19 @@ class LangfuseClient:
             logger.debug("Langfuse traces flushed")
 
     def shutdown(self) -> None:
-        """Закрытие клиента и отправка оставшихся трейсов."""
+        """Сбросить телеметрию перед закрытием SDK клиента."""
         if self._client:
             self._client.flush()
+            self._client.shutdown()
             self._client = None
-            logger.info("Langfuse client shut down")
+        if self._http_client:
+            self._http_client.close()
+            self._http_client = None
+        logger.info("Langfuse client shut down")
+
+    async def close(self) -> None:
+        """Закрыть Langfuse SDK и переданный mTLS HTTP-клиент."""
+        self.shutdown()
 
 
 # Глобальный экземпляр клиента
