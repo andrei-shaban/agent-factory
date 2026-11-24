@@ -1,4 +1,4 @@
-#scripts/generate_pki.py
+#generate_pki.py
 import argparse
 import datetime
 import secrets

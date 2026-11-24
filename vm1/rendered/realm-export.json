@@ -156,7 +156,7 @@
       "description": "OIDC-клиент для oauth2-proxy на ВМ №1",
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
-      "secret": "UD8kOEoNgA4a4EcVX8fG-khC8WaZALew",
+      "secret": "PpJaKY0CgRD2XqPoAvIMtxq=pBPE0TV4",
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,

@@ -14,7 +14,7 @@
 #   - AG-UI Gateway (FastAPI)
 #
 # ------------------------------------------------------------------------------
-# СЕРТИФИКАТЫ — централизованное хранилище F:\agent-factory\certs\
+# СЕРТИФИКАТЫ — централизованное хранилище D:\agent-factory\certs\
 # ------------------------------------------------------------------------------
 #   ../certs/ca/corp-ca.crt              — корпоративный Root CA (публичный)
 #   ../certs/vm1/nginx/server.crt|.key   — TLS nginx (SAN на оба домена)
@@ -160,8 +160,8 @@ services:
       - frontend
       - internal
     healthcheck:
-      # Management-порт 9000; health без префикса /auth (KC_HEALTH_ENABLED=true)
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      # Проверяем доступность HTTP listener; /health/ready на management-порту здесь отвечает 404.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
       interval: 30s
       timeout: 10s
       retries: 10

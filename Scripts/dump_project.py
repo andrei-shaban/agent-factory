@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 # Настройки путей
-TARGET_DIR = Path(r"F:\agent-factory\vm1")
+TARGET_DIR = Path(r"D:\agent-factory\vm1")
 OUTPUT_FILE = Path("project_dump.txt")
 
 # Папки и расширения файлов, которые лучше пропустить (бинарники, кэш, зависимости)

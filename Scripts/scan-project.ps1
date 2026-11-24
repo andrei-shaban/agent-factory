@@ -13,10 +13,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
-    [string]$ProjectPath = "F:\agent-factory\vm1",
+    [string]$ProjectPath = "D:\agent-factory\vm1",
 
     [Parameter(Mandatory = $false)]
-    [string]$OutputDir = "F:\agent-factory\vm1\scans",
+    [string]$OutputDir = "D:\agent-factory\vm1\scans",
 
     [Parameter(Mandatory = $false)]
     [long]$MaxFileSizeBytes = 1MB,

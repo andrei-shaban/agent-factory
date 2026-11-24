@@ -1,4 +1,4 @@
-=== СТРУКТУРА ПРОЕКТА: F:\agent-factory\vm1 ===
+=== СТРУКТУРА ПРОЕКТА: D:\agent-factory\vm1 ===
 
 vm1/
 ├── gateway
