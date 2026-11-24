@@ -1,9 +1,31 @@
 # vm2/docker-compose.yml
 # ==============================================================================
-# ВМ №2: Вычисления, песочницы, данные агентов
+# docker-compose.yml — ВМ №2: Вычисления, песочницы, данные агентов
+# Production Blueprint v5.2.1
 # ==============================================================================
-# Сертификаты монтируются из централизованного хранилища ../certs/
-# (принцип автономности артефактов, Blueprint §1.8)
+#
+# Состав:
+#   - Worker / LangGraph (единый Python-образ с Gateway, entrypoint: taskiq worker)
+#   - PostgreSQL / pgvector — Runtime & RAG (TLS включён)
+#   - Redis — фабрика (очередь ранов + Streams, TLS включён)
+#   - SeaweedFS: master + volume + filer + S3-шлюз
+#   - Docker socket proxy — управление песочницами
+#
+# Песочницы (Tools Sandbox, runsc) создаются динамически через docker-socket-proxy
+# и в этом файле не описываются.
+#
+# ------------------------------------------------------------------------------
+# СЕРТИФИКАТЫ — централизованное хранилище D:\agent-factory\certs\
+# ------------------------------------------------------------------------------
+#   ../certs/ca/corp-ca.crt                — корпоративный Root CA (публичный)
+#   ../certs/vm2/client/vm2-client.crt|.key — клиентский сертификат воркера (mTLS)
+#   ../certs/vm2/pg/pg-server.crt|.key      — серверный TLS PostgreSQL
+#   ../certs/vm2/redis/redis.crt|.key       — серверный TLS Redis
+#
+# ОБЯЗАТЕЛЬНО перед первым стартом:
+#   1. cp .env.example .env && python init_project.py (рендеринг redis/s3 конфигов)
+#   2. Проверить ../certs/ (наличие и валидность сертификатов)
+#   3. Задать VM2_HOST_IP в .env — на этот IP публикуются порты для ВМ №1
 # ==============================================================================
 
 name: factory-vm2
@@ -11,6 +33,10 @@ name: factory-vm2
 services:
   # ============================================================================
   # WORKER / LANGGRAPH
+  # ============================================================================
+  # Единый образ с Gateway (factory/gateway:latest). Код Worker поставляется
+  # отдельно через bind-mount (принцип автономности артефактов, Blueprint §1.8).
+  # Worker подключается к Redis по TLS (rediss://) через Docker-сеть.
   # ============================================================================
   worker:
     image: factory/gateway:latest
@@ -21,22 +47,22 @@ services:
       ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-Asia/Yekaterinburg}
-      # Redis фабрики — по TLS через Docker-сеть
+      # Redis фабрики — по TLS через Docker-сеть (порт 6379, TLS включён)
       REDIS_FACTORY_URL: rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@redis-factory:6379
       REDIS_FACTORY_TLS: "true"
-      # PostgreSQL Runtime — локально (внутри Docker-сети, без TLS)
+      # PostgreSQL Runtime — локально (без TLS, внутри Docker-сети)
       POSTGRES_RUNTIME_URL: postgresql://${WORKER_DB_USER}:${WORKER_DB_PASSWORD}@postgres-runtime:5432/factory
       # Langfuse (ВМ №1)
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
-      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://langfuse-ingest.corp.example.com}
+      LANGFUSE_HOST: ${LANGFUSE_HOST}
       # SeaweedFS S3 — локально
       SEAWEED_S3_ENDPOINT: http://seaweedfs-s3:8333
       SEAWEED_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       SEAWEED_S3_SECRET_KEY: ${S3_SECRET_KEY}
       SEAWEED_S3_BUCKET_FACTORY: ${SEAWEED_S3_BUCKET_FACTORY:-factory-artifacts}
       SEAWEED_S3_BUCKET_BACKUPS: ${SEAWEED_S3_BUCKET_BACKUPS:-postgres-backups}
-      # Управление песочницами через socket proxy
+      # Управление песочницами через socket proxy (прямой docker.sock не монтируется)
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       SANDBOX_RUNTIME: runsc
       SANDBOX_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2.0}
@@ -56,7 +82,7 @@ services:
       CORP_PG_URL: ${CORP_PG_URL}
       # Рабочая станция (Этап 2) — mTLS
       WORKSTATION_URL: ${WORKSTATION_URL}
-      # Доверие корпоративному УЦ
+      # Доверие корпоративному УЦ (указывает на смонтированный CA)
       SSL_CERT_FILE: /etc/certs/corp-ca.crt
       REQUESTS_CA_BUNDLE: /etc/certs/corp-ca.crt
       # Air-Gap: телеметрия отключена
@@ -65,17 +91,19 @@ services:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     volumes:
-      # Клиентский сертификат воркера из централизованного хранилища (принцип автономности §1.8)
+      # Клиентский сертификат воркера из централизованного хранилища (§1.8)
       - ../certs/vm2/client/vm2-client.crt:/etc/certs/vm2-client.crt:ro
       - ../certs/vm2/client/vm2-client.key:/etc/certs/vm2-client.key:ro
-      # Корпоративный Root CA (для проверки серверных сертификатов)
+      # Корпоративный Root CA (для проверки серверных сертификатов GPU, ВМ №4)
       - ../certs/ca/corp-ca.crt:/etc/certs/corp-ca.crt:ro
-      # Корпоративный Root CA для проверки TLS-сертификата при подключении к Redis по rediss://
+      # Корпоративный Root CA для проверки TLS Redis (Worker подключается по rediss://)
       - ../certs/ca/corp-ca.crt:/etc/redis/tls/ca.crt:ro
-      # Код воркера (принцип автономности артефактов, Blueprint §1.8)
+      # Код Worker (принцип автономности артефактов, Blueprint §1.8).
+      # WORKDIR контейнера = /app, поэтому worker.app.* доступен как пакет.
       - ./worker:/app/worker:ro
-      # Wheel-cache и временная директория
+      # Wheel-cache для песочниц (общий именованный том)
       - wheel-cache:/app/wheel-cache
+      # Временная директория Worker (логи, кэш)
       - worker-tmp:/app/tmp
     depends_on:
       postgres-runtime:
@@ -93,6 +121,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
+      # procps в образе нет — проверяем наличие процесса через /proc
       test: ["CMD-SHELL", "python3 -c \"import os,sys; found=any('taskiq' in open(os.path.join('/proc',p,'cmdline'),'rb').read().decode('utf-8','ignore') for p in os.listdir('/proc') if p.isdigit() and os.path.exists(os.path.join('/proc',p,'cmdline'))); sys.exit(0 if found else 1)\""]
       interval: 30s
       timeout: 10s
@@ -107,10 +136,13 @@ services:
   # ============================================================================
   # POSTGRESQL / PGVECTOR — RUNTIME & RAG (TLS включён)
   # ============================================================================
+  # Blueprint §3.1: "TLS + scram-sha-256" для маршрута ВМ №1 → ВМ №2.
+  # ============================================================================
   postgres-runtime:
     image: pgvector/pgvector:pg17
     container_name: vm2-postgres-runtime
     restart: unless-stopped
+    # Жёсткое лимитирование памяти и WAL-архивация задаются флагами.
     command:
       - postgres
       - -c
@@ -149,6 +181,7 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
       TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
+      # Только на внутренний IP хоста: доступ с ВМ №1 (Gateway), не наружу
       - "${VM2_HOST_IP}:5432:5432"
     volumes:
       - postgres-runtime-data:/var/lib/postgresql/data
@@ -156,7 +189,7 @@ services:
       - ./init-db/02-enable-extensions.sql:/docker-entrypoint-initdb.d/02-enable-extensions.sql:ro
       - ./init-db/03-create-tables.sql:/docker-entrypoint-initdb.d/03-create-tables.sql:ro
       - backups-wal-archive:/var/lib/postgresql/wal-archive
-      # TLS-сертификаты из централизованного хранилища (принцип автономности)
+      # TLS-сертификаты PostgreSQL из централизованного хранилища (§1.8)
       - ../certs/vm2/pg/pg-server.crt:/etc/certs/pg-server.crt:ro
       - ../certs/vm2/pg/pg-server.key:/etc/certs/pg-server.key:ro
       - ../certs/ca/corp-ca.crt:/etc/certs/corp-ca.crt:ro
@@ -177,6 +210,9 @@ services:
   # ============================================================================
   # REDIS — ФАБРИКА (TLS на 6379)
   # ============================================================================
+  # Blueprint §3.1: "Шлюз ВМ №1 подключается по TLS с ACL-пользователем agui_svc"
+  # Порт 6379 — только TLS (non-TLS отключён через port 0 в redis.conf).
+  # ============================================================================
   redis-factory:
     image: redis:8-alpine
     container_name: vm2-redis-factory
@@ -185,12 +221,13 @@ services:
     environment:
       TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
+      # TLS + ACL agui_svc для Gateway с ВМ №1 (порт 6379 — только TLS)
       - "${VM2_HOST_IP}:6379:6379"
     volumes:
-      # Конфигурация из отрендеренных файлов
+      # Конфигурация Redis (отрендеренная через init_project.py)
       - ./rendered/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - ./rendered/redis/acl.conf:/usr/local/etc/redis/acl.conf:ro
-      # TLS-сертификаты из централизованного хранилища (принцип автономности)
+      # TLS-сертификаты Redis из централизованного хранилища (§1.8)
       - ../certs/vm2/redis/redis.crt:/etc/redis/tls/redis.crt:ro
       - ../certs/vm2/redis/redis.key:/etc/redis/tls/redis.key:ro
       - ../certs/ca/corp-ca.crt:/etc/redis/tls/ca.crt:ro
@@ -199,6 +236,7 @@ services:
     networks:
       - internal
     healthcheck:
+      # Healthcheck через TLS (redis-cli с --tls и --cacert)
       test: ["CMD-SHELL", "redis-cli --tls --cert /etc/redis/tls/redis.crt --key /etc/redis/tls/redis.key --cacert /etc/redis/tls/ca.crt -a \"$$REDIS_FACTORY_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
@@ -280,6 +318,9 @@ services:
   # ============================================================================
   # SEAWEEDFS — FILER
   # ============================================================================
+  # Метаданные filer хранятся в LevelDB на именованном томе.
+  # Путь к БД задаётся в filer.toml — без него метаданные теряются при пересоздании.
+  # ============================================================================
   seaweedfs-filer:
     image: chrislusf/seaweedfs:latest
     container_name: vm2-seaweedfs-filer
@@ -329,6 +370,7 @@ services:
       - -ip.bind=0.0.0.0
       - -config=/etc/seaweedfs/s3.json
     ports:
+      # S3 для Langfuse (ВМ №1) и воркеров; path-style обязателен
       - "${VM2_HOST_IP}:8333:8333"
     volumes:
       - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
@@ -392,10 +434,11 @@ services:
 networks:
   internal:
     driver: bridge
-    # internal: true не ставится: нужен egress к GPU, ВМ №4, ВМ №1
+    # internal: true не ставится: Worker нужен egress к GPU-ендпоинтам, ВМ №4,
+    # ВМ №1 (PyPI, Langfuse). Ограничение — матрицей маршрутов на межсетевом экране.
 
 # ==============================================================================
-# VOLUMES (только данные; конфиги и сертификаты — через bind mounts)
+# VOLUMES — только данные. Конфиги и сертификаты — через bind mounts.
 # ==============================================================================
 volumes:
   postgres-runtime-data:
