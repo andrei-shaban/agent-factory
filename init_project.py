@@ -208,6 +208,7 @@ def update_env_file(env_path: Path, new_secrets: Dict[str, str]) -> int:
 
     updated_lines = []
     replaced_count = 0
+    updated_keys = set()
 
     for line in original_content.splitlines():
         match = pattern.match(line.strip())
@@ -215,9 +216,16 @@ def update_env_file(env_path: Path, new_secrets: Dict[str, str]) -> int:
             key = match.group(1)
             if key in new_secrets:
                 updated_lines.append(f"{key}='{new_secrets[key]}'")
+                updated_keys.add(key)
                 replaced_count += 1
                 continue
         updated_lines.append(line)
+
+    missing_keys = [key for key, value in new_secrets.items() if key not in updated_keys and value is not None]
+    if missing_keys:
+        if updated_lines and updated_lines[-1].strip():
+            updated_lines.append("")
+        updated_lines.extend(f"{key}='{new_secrets[key]}'" for key in missing_keys)
 
     env_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
     return replaced_count
@@ -292,7 +300,7 @@ def render_file(
                 identities = []
                 for identity in cleaned.get("identities", []):
                     rendered_identity = {key: identity[key] for key in ("name", "credentials") if key in identity}
-                    actions = set(identity.get("actions", [])) - {"Admin"}
+                    actions = set()
                     for bucket_rule in identity.get("buckets", []):
                         bucket = bucket_rule.get("name")
                         if bucket:

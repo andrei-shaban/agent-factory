@@ -4,8 +4,8 @@
 # Production Blueprint v5.2
 # ==============================================================================
 # Назначение:
-#   1. Установка gVisor runtime (runsc) для изолированных песочниц.
-#   2. Настройка Docker (включение runsc как runtime по умолчанию для sandbox).
+#   1. Установка gVisor binary (runsc), не изменяя основной Docker daemon.
+#   2. Проверка отдельного rootless sandbox dockerd и его runtime runsc.
 #   3. Создание директории wheel-cache и wheel-cache volume.
 #   4. Инициализация бакетов SeaweedFS S3 (factory-artifacts, postgres-backups, langfuse-events).
 #   5. Проверка готовности хоста к запуску docker compose.
@@ -136,53 +136,26 @@ install_gvisor() {
 # 2. НАСТРОЙКА DOCKER RUNTIME
 # ==============================================================================
 configure_docker_runtime() {
-    log_info "=== Шаг 2: Настройка Docker runtime ==="
-
-    DOCKER_DAEMON="/etc/docker/daemon.json"
-
-    # Проверяем, есть ли уже настройка runsc
-    if [[ -f "$DOCKER_DAEMON" ]] && grep -q "runsc" "$DOCKER_DAEMON" 2>/dev/null; then
-        log_success "Docker runtime runsc уже настроен"
+    log_info "Checking dedicated rootless sandbox dockerd"
+    set -a
+    source "$ENV_FILE"
+    set +a
+    if [[ -z "${SANDBOX_DOCKER_SOCKET:-}" || ! -S "${SANDBOX_DOCKER_SOCKET:-/nonexistent}" ]]; then
+        log_warn "Dedicated rootless sandbox socket is unavailable; main Docker daemon remains untouched"
         return 0
     fi
-
-    log_info "Добавление runsc в Docker daemon.json..."
-
-    # Создаём или обновляем daemon.json
-    if [[ -f "$DOCKER_DAEMON" ]]; then
-        # Добавляем runsc в существующий конфиг
-        python3 -c "
-import json, sys
-with open('$DOCKER_DAEMON') as f:
-    config = json.load(f)
-config.setdefault('runtimes', {})['runsc'] = {
-    'path': '/usr/bin/runsc',
-    'runtimeArgs': []
-}
-with open('$DOCKER_DAEMON', 'w') as f:
-    json.dump(config, f, indent=2)
-"
-    else
-        # Создаём новый конфиг
-        mkdir -p /etc/docker
-        cat > "$DOCKER_DAEMON" <<'EOF'
-{
-  "runtimes": {
-    "runsc": {
-      "path": "/usr/bin/runsc",
-      "runtimeArgs": []
-    }
-  }
-}
-EOF
+    local runtimes
+    if ! runtimes=$(DOCKER_HOST="unix://${SANDBOX_DOCKER_SOCKET}" docker info --format '{{json .Runtimes}}' 2>/dev/null); then
+        log_warn "Cannot query dedicated sandbox dockerd; sandbox remains unavailable"
+        return 0
     fi
-
-    log_success "Docker runtime runsc добавлен в $DOCKER_DAEMON"
-    log_warn "Требуется перезапуск Docker: sudo systemctl restart docker"
+    if [[ "$runtimes" != *"runsc"* ]]; then
+        log_warn "Dedicated sandbox dockerd has no runsc runtime; sandbox remains unavailable"
+        return 0
+    fi
+    log_success "Dedicated rootless dockerd and runsc runtime are available"
 }
 
-# ==============================================================================
-# 3. СОЗДАНИЕ WHEEL-CACHE
 # ==============================================================================
 setup_wheel_cache() {
     log_info "=== Шаг 3: Создание wheel-cache ==="
