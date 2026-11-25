@@ -7,7 +7,7 @@ Production Blueprint v5.2.1
 Генерация корпоративного Root CA и всех необходимых сертификатов
 для mTLS-интеграций между компонентами платформы (ВМ №1, ВМ №2, GPU-узел).
 
-Структура вывода (D:\agent-factory\certs\):
+Структура вывода (D:\\agent-factory\\certs\\):
 ├── ca\
 │   ├── corp-ca.crt          # Корпоративный Root CA (публичный, для доверия)
 │   └── corp-ca.key          # Приватный ключ Root CA (ХРАНИТЬ В СЕКРЕТЕ!)
@@ -30,12 +30,12 @@ Production Blueprint v5.2.1
 │   ├── gpu-server.crt       # Серверный сертификат mTLS front GPU-узла
 │   ├── gpu-server.key
 │   └── ca.crt               # Копия Root CA
-└── browser\ (опционально)
+└── browser/ (опционально)
     └── admin-client.pfx     # Клиентский сертификат для браузера (mTLS)
 
 Использование:
   python generate_pki.py
-  python generate_pki.py --certs-dir D:\agent-factory\certs
+  python generate_pki.py --certs-dir D:\\agent-factory\\certs
   python generate_pki.py --ingest-only  # Только сертификат для Langfuse ingest
   python generate_pki.py --no-pfx       # Без генерации PFX-бандлов для Windows
 
@@ -262,6 +262,8 @@ def main():
                         help="Generate ONLY the VM2 SeaweedFS S3 TLS certificate/key using existing Root CA")
     parser.add_argument("--refresh-leaf-certs", action="store_true",
                         help="Refresh leaf certificates while preserving the existing Root CA")
+    parser.add_argument("--rotate-root-ca", action="store_true",
+                        help="Explicitly rotate the Root CA and invalidate the existing trust anchor")
     args = parser.parse_args()
 
     certs_dir: Path = args.certs_dir
@@ -333,11 +335,15 @@ def main():
         return
 
     existing_ca = None
-    if args.refresh_leaf_certs:
-        ca_key_path = certs_dir / "ca" / "corp-ca.key"
-        ca_cert_path = certs_dir / "ca" / "corp-ca.crt"
-        if not ca_key_path.is_file() or not ca_cert_path.is_file():
-            raise FileNotFoundError("Existing Root CA key/certificate are required for --refresh-leaf-certs")
+    ca_key_path = certs_dir / "ca" / "corp-ca.key"
+    ca_cert_path = certs_dir / "ca" / "corp-ca.crt"
+    has_ca_key, has_ca_cert = ca_key_path.is_file(), ca_cert_path.is_file()
+    if has_ca_key != has_ca_cert:
+        raise FileNotFoundError("Incomplete Root CA pair found; restore both CA files before PKI generation")
+    reuse_existing_ca = (args.refresh_leaf_certs or (has_ca_key and not args.rotate_root_ca))
+    if reuse_existing_ca:
+        if not has_ca_key:
+            raise FileNotFoundError("Existing Root CA key/certificate are required to refresh leaf certificates")
         existing_ca = (
             serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None),
             x509.load_pem_x509_certificate(ca_cert_path.read_bytes()),
@@ -348,8 +354,10 @@ def main():
     if not args.no_archive and certs_dir.exists():
         print("[ARCHIVE] Existing files...")
         files_to_archive = []
-        if not args.refresh_leaf_certs:
+        if args.rotate_root_ca:
             files_to_archive.extend(["ca/corp-ca.key", "ca/corp-ca.crt"])
+        if args.refresh_leaf_certs or (has_ca_key and not args.rotate_root_ca):
+            print("[ARCHIVE] Preserving Root CA; archive current leaf certificates only.")
         for ext in ["*.key", "*.crt", "*.pfx"]:
             for f in certs_dir.rglob(ext):
                 rel = f.relative_to(certs_dir)
@@ -431,7 +439,20 @@ def main():
     shutil.copy2(certs_dir / "ca" / "corp-ca.crt", certs_dir / "vm2" / "redis" / "ca.crt")
     print(f"   CN: redis-factory | SAN: redis-factory, localhost\n")
 
-    # 6. SEAWEEDFS S3 SERVER CERTIFICATE (ВМ №2)
+    # 6. LANGFUSE INGEST TLS SERVER CERTIFICATE (VM1, mTLS front)
+    print("[6/8] Generating VM1 Langfuse OTel-ingest server certificate...")
+    ingest_key, ingest_cert = build_node_certificate(
+        ca_key=ca_key, ca_cert=ca_cert,
+        common_name="langfuse-ingest.corp.example.com",
+        organization=organization,
+        dns_names=["langfuse-ingest.corp.example.com", "localhost"],
+        ip_addresses=[], is_server=True, is_client=False,
+    )
+    save_private_key(ingest_key, certs_dir / "vm1" / "nginx" / "langfuse-ingest.key")
+    save_certificate(ingest_cert, certs_dir / "vm1" / "nginx" / "langfuse-ingest.crt")
+    print("   CN: langfuse-ingest.corp.example.com\\n")
+
+    # 7. SEAWEEDFS S3 SERVER CERTIFICATE (ВМ №2)
     print("[6/8] Generating SeaweedFS S3 server certificate (ВМ №2)...")
     s3_key, s3_cert = build_node_certificate(
         ca_key=ca_key, ca_cert=ca_cert, common_name="seaweedfs-s3",

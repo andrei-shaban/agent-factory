@@ -79,5 +79,5 @@ build/
 *.swo
 .DS_Store
 Thumbs.db
-/vm1/certs/
-/vm2/certs/
+certs/
+data/

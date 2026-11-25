@@ -109,6 +109,14 @@ def gen_hex(num_bytes: int) -> str:
     return secrets.token_hex(num_bytes)
 
 
+def configured_value(existing: Dict[str, str], key: str) -> Optional[str]:
+    """Ignore documented template placeholders while preserving real installed values."""
+    value = existing.get(key, "").strip()
+    if not value or value.startswith("<CHANGE_ME") or value in {"pk-lf-...", "sk-lf-..."}:
+        return None
+    return value
+
+
 def build_vm1_secrets(existing: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Return existing VM1 credentials and generate only values not already configured."""
     existing = existing or {}
@@ -138,7 +146,7 @@ def build_vm1_secrets(existing: Optional[Dict[str, str]] = None) -> Dict[str, st
         "S3_SECRET_KEY": gen_alnum(40),
     }
 
-    new_secrets = {key: (existing.get(key) or value) for key, value in new_secrets.items()}
+    new_secrets = {key: (configured_value(existing, key) or value) for key, value in new_secrets.items()}
 
     # URL-encoded пары для connection strings
     urlencoded = {
@@ -167,10 +175,11 @@ def build_vm2_secrets(shared: Dict[str, str], existing: Optional[Dict[str, str]]
         "WORKER_DB_PASSWORD": gen_32_pass(),
         "REDIS_FACTORY_PASSWORD": gen_acl_password(),
         "CORP_PG_PASSWORD": gen_32_pass(),
+        "SEAWEEDFS_FILER_SIGNING_KEY": secrets.token_hex(32),
     }
 
     # Preserve local DB credentials; shared VM1 values are authoritative when present.
-    new_secrets = {key: (existing.get(key) or value) for key, value in new_secrets.items()}
+    new_secrets = {key: (configured_value(existing, key) or value) for key, value in new_secrets.items()}
     for key, fallback in {
         "GATEWAY_DB_PASSWORD": gen_32_pass(),
         "REDIS_FACTORY_ACL_PASSWORD": gen_acl_password(),
@@ -224,15 +233,18 @@ def load_env(env_path: Path) -> Dict[str, str]:
         sys.exit(1)
 
     env_vars: Dict[str, str] = {}
-    pattern = re.compile(r"^([A-Z0-9_]+)='?([^']*)'?\s*$")
+    pattern = re.compile(r"^([A-Z0-9_]+)=(.*)$")
 
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+    for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip().removesuffix("\\r")
+        if not line or line.startswith("#") or "=" not in line:
             continue
         match = pattern.match(line)
         if match:
-            env_vars[match.group(1)] = match.group(2)
+            value = match.group(2).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '\"'}:
+                value = value[1:-1]
+            env_vars[match.group(1)] = value
 
     return env_vars
 
@@ -319,20 +331,9 @@ def init_vm1() -> Dict[str, str]:
     # Preserve credentials already used by persistent database volumes and clients.
     existing = load_env(env_path)
     generated = build_vm1_secrets(existing)
-    new_secrets = {key: existing.get(key) or value for key, value in generated.items()}
-    for key, value in existing.items():
-        if key not in new_secrets:
-            new_secrets[key] = value
-    new_secrets.setdefault("LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT", f"http://{existing.get('VM2_HOST_IP', '127.0.0.1')}:8333")
-    for encoded_key, source_key in {
-        "CLICKHOUSE_PASSWORD_URLENCODED": "CLICKHOUSE_PASSWORD",
-        "REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED": "REDIS_LANGFUSE_ACL_PASSWORD",
-        "LANGFUSE_DB_PASSWORD_URLENCODED": "LANGFUSE_DB_PASSWORD",
-        "REDIS_FACTORY_ACL_PASSWORD_URLENCODED": "REDIS_FACTORY_ACL_PASSWORD",
-        "GATEWAY_DB_PASSWORD_URLENCODED": "GATEWAY_DB_PASSWORD",
-    }.items():
-        new_secrets[encoded_key] = urllib.parse.quote(new_secrets[source_key], safe="")
-    new_secrets.update(existing)
+    new_secrets = dict(existing)
+    new_secrets.update(generated)
+    new_secrets["LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT"] = existing.get("LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT") or "https://${VM2_HOST_IP}:8333"
     for key, source_key in {
         "CLICKHOUSE_PASSWORD_URLENCODED": "CLICKHOUSE_PASSWORD",
         "REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED": "REDIS_LANGFUSE_ACL_PASSWORD",
@@ -409,16 +410,18 @@ def init_vm2(shared: Dict[str, str]) -> None:
     existing = load_env(env_path)
     generated = build_vm2_secrets(shared, existing)
     new_secrets = dict(existing)
-    new_secrets.update({key: existing.get(key) or value for key, value in generated.items()})
-    if existing.get("GPU_NODE_IP"):
-        new_secrets["GPU_NODE_IP"] = existing["GPU_NODE_IP"]
+    new_secrets.update(generated)
     for key in ("GATEWAY_DB_PASSWORD", "REDIS_FACTORY_ACL_PASSWORD", "S3_ACCESS_KEY", "S3_SECRET_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         if shared.get(key):
             new_secrets[key] = shared[key]
-    new_secrets.update(existing)
-    for key in ("GATEWAY_DB_PASSWORD", "REDIS_FACTORY_ACL_PASSWORD", "S3_ACCESS_KEY", "S3_SECRET_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
-        if shared.get(key):
-            new_secrets[key] = shared[key]
+    new_secrets["WORKER_POSTGRES_URL"] = existing.get("WORKER_POSTGRES_URL") or "postgresql://${WORKER_DB_USER}:${WORKER_DB_PASSWORD}@vm2-postgres:5432/factory"
+    new_secrets["WORKER_REDIS_URL"] = existing.get("WORKER_REDIS_URL") or "rediss://agui_svc:${REDIS_FACTORY_ACL_PASSWORD}@redis-factory:6379/0?ssl_ca_certs=/etc/certs/corp-ca.crt"
+    new_secrets["LANGFUSE_HOST"] = existing.get("LANGFUSE_HOST") or "https://langfuse-ingest.corp.example.com"
+    new_secrets["SEAWEED_S3_ENDPOINT"] = existing.get("SEAWEED_S3_ENDPOINT") or "https://${VM2_HOST_IP}:8333"
+    new_secrets["POSTGRES_BACKUP_S3_ENDPOINT"] = existing.get("POSTGRES_BACKUP_S3_ENDPOINT") or "https://${VM2_HOST_IP}:8333"
+    new_secrets["SEAWEEDFS_FILER_SIGNING_KEY"] = configured_value(existing, "SEAWEEDFS_FILER_SIGNING_KEY") or secrets.token_hex(32)
+    new_secrets["PYPI_MIRROR_URL"] = existing.get("PYPI_MIRROR_URL") or "http://pypiserver:8080"
+    new_secrets.setdefault("SANDBOX_DOCKER_SOCKET", "/run/user/1000/docker.sock")
     replaced = update_env_file(env_path, new_secrets)
     log_info(f"Preserved local credentials and synchronized shared VM2 keys: {replaced}")
 
@@ -435,6 +438,7 @@ def init_vm2(shared: Dict[str, str]) -> None:
         "REDIS_FACTORY_ACL_PASSWORD",
         "S3_ACCESS_KEY",
         "S3_SECRET_KEY",
+        "SEAWEEDFS_FILER_SIGNING_KEY",
     ]
     missing = [v for v in required if not env_vars.get(v)]
     if missing:
@@ -462,6 +466,18 @@ def init_vm2(shared: Dict[str, str]) -> None:
 
     log_info(f"ВМ №2 готова: {success_count} файлов отрендерено")
 
+    sandbox_socket = env_vars.get("SANDBOX_DOCKER_SOCKET", "").strip()
+    if sandbox_socket and not sandbox_socket.startswith("/"):
+        log_error("SANDBOX_DOCKER_SOCKET must be an absolute host path")
+        sys.exit(1)
+    if sandbox_socket:
+        if sys.platform.startswith("linux") and not Path(sandbox_socket).exists():
+            log_warn("Configured sandbox socket does not exist on this host; start the dedicated rootless sandbox dockerd before relying on sandbox execution")
+        else:
+            log_info("Sandbox socket path configured; verify it belongs to the dedicated rootless dockerd on VM2 host")
+    else:
+        log_warn("SANDBOX_DOCKER_SOCKET missing; sandbox creation is unavailable until the dedicated daemon is configured")
+
     # GPU_NODE_IP is optional when corporate DNS resolves the configured GPU_ENDPOINT_URL.
     gpu_endpoint = env_vars.get("GPU_ENDPOINT_URL", "").strip()
     gpu_node_ip = env_vars.get("GPU_NODE_IP", "").strip()
@@ -469,7 +485,9 @@ def init_vm2(shared: Dict[str, str]) -> None:
         try:
             import ipaddress
             ipaddress.ip_address(gpu_node_ip)
-            log_info("GPU endpoint override validated")
+            hosts_file = VM2_DIR / "rendered" / "gpu-extra-hosts.txt"
+            hosts_file.write_text(f"gpu-node.corp.example.com {gpu_node_ip}\\n", encoding="utf-8")
+            log_info("GPU endpoint override validated and mapping rendered")
         except ValueError:
             log_error("GPU_NODE_IP must be a valid address; refusing to invent a GPU route")
             sys.exit(1)
@@ -483,10 +501,6 @@ def init_vm2(shared: Dict[str, str]) -> None:
                 log_info("GPU endpoint hostname resolves using host DNS")
             except OSError:
                 log_warn(f"GPU endpoint host {gpu_host} is not resolvable here; GPU node/network must provide it before runtime calls")
-
-    network = subprocess.run(["docker", "network", "inspect", "factory-cross-vm"], capture_output=True, text=True)
-    if network.returncode != 0:
-        subprocess.run(["docker", "network", "create", "factory-cross-vm"], check=True)
 
 
 

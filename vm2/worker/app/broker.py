@@ -19,6 +19,9 @@ settings = get_settings()
 broker = ListQueueBroker(
     url=settings.redis_factory_url,
     queue_name="agui:tasks",
+    socket_timeout=None,
+    socket_connect_timeout=10,
+
     # serializer по умолчанию использует JSON (orjson, если установлен)
 )
 

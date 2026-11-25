@@ -61,7 +61,7 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: https://langfuse-ingest.corp.example.com
       # SeaweedFS S3 — локально
-      SEAWEED_S3_ENDPOINT: http://seaweedfs-s3:8333
+      SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT}
       SEAWEED_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       SEAWEED_S3_SECRET_KEY: ${S3_SECRET_KEY}
       SEAWEED_S3_BUCKET_FACTORY: ${SEAWEED_S3_BUCKET_FACTORY:-factory-artifacts}
@@ -89,6 +89,7 @@ services:
       # Доверие корпоративному УЦ (указывает на смонтированный CA)
       SSL_CERT_FILE: /etc/certs/corp-ca.crt
       REQUESTS_CA_BUNDLE: /etc/certs/corp-ca.crt
+      AWS_CA_BUNDLE: /etc/certs/corp-ca.crt
       # Air-Gap: телеметрия отключена
       LANGSMITH_TRACING: "false"
       LANGCHAIN_TRACING_V2: "false"
@@ -116,8 +117,6 @@ services:
       redis-factory:
         condition: service_healthy
       seaweedfs-s3:
-        condition: service_started
-      docker-socket-proxy:
         condition: service_started
     networks:
       - internal
@@ -358,6 +357,9 @@ services:
     volumes:
       - seaweedfs-filer-data:/data
       - ./seaweedfs/filer.toml:/etc/seaweedfs/filer.toml:ro
+    environment:
+      WEED_JWT_FILER_SIGNING_KEY: ${SEAWEEDFS_FILER_SIGNING_KEY}
+      TZ: ${TZ:-Asia/Yekaterinburg}
     depends_on:
       seaweedfs-master:
         condition: service_healthy
@@ -387,14 +389,16 @@ services:
     command:
       - s3
       - -filer=seaweedfs-filer:8888
-      - -port=8333
+      - -port=0
       - -ip.bind=0.0.0.0
+      - -port.https=8333
       - -config=/etc/seaweedfs/s3.json
       - -cert.file=/etc/seaweedfs/tls/s3-server.crt
       - -key.file=/etc/seaweedfs/tls/s3-server.key
     environment:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
+      WEED_JWT_FILER_SIGNING_KEY: ${SEAWEEDFS_FILER_SIGNING_KEY}
       TZ: ${TZ:-Asia/Yekaterinburg}
     ports:
       # S3 для Langfuse (ВМ №1) и воркеров; path-style обязателен
@@ -420,6 +424,7 @@ services:
   # DOCKER SOCKET PROXY
   # ============================================================================
   docker-socket-proxy:
+    profiles: ["sandbox"]
     image: tecnativa/docker-socket-proxy:latest
     container_name: vm2-docker-socket-proxy
     restart: unless-stopped
@@ -428,6 +433,7 @@ services:
       CONTAINERS: "1"
       POST: "1"
       EXEC: "0"
+      ALLOW_START: "1"
       # Запрещено всё остальное
       NETWORKS: "0"
       VOLUMES: "0"
@@ -448,7 +454,7 @@ services:
       EVENTS: "0"
       PING: "1"
     volumes:
-      - ${SANDBOX_DOCKER_SOCKET:-/run/user/1000/docker.sock}:/var/run/docker.sock:ro
+      - ${SANDBOX_DOCKER_SOCKET}:/var/run/docker.sock:ro
     networks:
       - internal
     security_opt:
