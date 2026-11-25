@@ -281,7 +281,7 @@ services:
       - -ip=seaweedfs-master
       - -port=9333
       - -mdir=/data/master
-      - -defaultReplication=${SEAWEED_REPLICATION:-001}
+      - -defaultReplication=${SEAWEED_REPLICATION:-000}
       - -volumeSizeLimitMB=30000
       - -garbageThreshold=0.3
       - -resumeState
