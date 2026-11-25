@@ -1,0 +1,9 @@
+Фабрика агентов и алгоритмов (Agent and Algorithm Factory)
+Copyright 2026 Andrei Shaban
+
+Этот продукт включает в себя архитектурные решения, описанные в документе:
+"Фабрика агентов и алгоритмов — Production Blueprint v5.2.1"
+Автор: Andrei Shaban (@andrei-shaban / @andrei_shaban)
+
+Данный проект разработан в соответствии с принципами OpenSSF Best Practices
+и предназначен для развёртывания в изолированных корпоративных контурах (Air-Gap).

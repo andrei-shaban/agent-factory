@@ -2,8 +2,6 @@
 /.venv/
 /certs/
 /vm2/certs/
-/certs/
 /vm1/rendered/
-/vm1/data/
 /vm1/data/
 /vm1/logs/
