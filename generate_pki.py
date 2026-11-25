@@ -258,6 +258,10 @@ def main():
     parser.add_argument("--no-pfx", action="store_true", help="Disable PFX generation")
     parser.add_argument("--ingest-only", action="store_true",
                         help="Generate ONLY the VM1 Langfuse OTel-ingest server cert using existing Root CA")
+    parser.add_argument("--seaweedfs-only", action="store_true",
+                        help="Generate ONLY the VM2 SeaweedFS S3 TLS certificate/key using existing Root CA")
+    parser.add_argument("--refresh-leaf-certs", action="store_true",
+                        help="Refresh leaf certificates while preserving the existing Root CA")
     args = parser.parse_args()
 
     certs_dir: Path = args.certs_dir
@@ -307,18 +311,53 @@ def main():
     print(f"\n[PKI] Generator :: Factory Agents Platform (Blueprint v5.2.1)")
     print(f"   Directory: {certs_dir.resolve()}\n")
 
+    if args.seaweedfs_only:
+        ca_key_path = certs_dir / "ca" / "corp-ca.key"
+        ca_cert_path = certs_dir / "ca" / "corp-ca.crt"
+        if not ca_key_path.is_file() or not ca_cert_path.is_file():
+            raise FileNotFoundError("Existing Root CA files required for --seaweedfs-only")
+        ca_key = serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None)
+        ca_cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
+        output_dir = certs_dir / "vm2" / "seaweedfs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archive_if_exists(output_dir / "s3-server.crt", certs_dir / "archive")
+        archive_if_exists(output_dir / "s3-server.key", certs_dir / "archive")
+        key, cert = build_node_certificate(
+            ca_key=ca_key, ca_cert=ca_cert, common_name="seaweedfs-s3",
+            organization=organization, dns_names=["seaweedfs-s3", "localhost"],
+            ip_addresses=[], is_server=True, is_client=False,
+        )
+        save_private_key(key, output_dir / "s3-server.key")
+        save_certificate(cert, output_dir / "s3-server.crt")
+        print("[OK] Generated VM2 SeaweedFS S3 TLS certificate with existing Root CA")
+        return
+
+    existing_ca = None
+    if args.refresh_leaf_certs:
+        ca_key_path = certs_dir / "ca" / "corp-ca.key"
+        ca_cert_path = certs_dir / "ca" / "corp-ca.crt"
+        if not ca_key_path.is_file() or not ca_cert_path.is_file():
+            raise FileNotFoundError("Existing Root CA key/certificate are required for --refresh-leaf-certs")
+        existing_ca = (
+            serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None),
+            x509.load_pem_x509_certificate(ca_cert_path.read_bytes()),
+        )
     if generate_pfx_files:
-        print(f"[PFX] Password for bundles (save this!): {pfx_password}\n")
+        print(f"[PFX] Password for bundles (save this!): {pfx_password}\\n")
 
     if not args.no_archive and certs_dir.exists():
         print("[ARCHIVE] Existing files...")
-        files_to_archive = ["ca/corp-ca.key", "ca/corp-ca.crt"]
+        files_to_archive = []
+        if not args.refresh_leaf_certs:
+            files_to_archive.extend(["ca/corp-ca.key", "ca/corp-ca.crt"])
         for ext in ["*.key", "*.crt", "*.pfx"]:
             for f in certs_dir.rglob(ext):
-                files_to_archive.append(str(f.relative_to(certs_dir)))
-
+                rel = f.relative_to(certs_dir)
+                if rel.parts[:1] == ("ca",):
+                    continue
+                files_to_archive.append(str(rel))
         archived_count = sum(1 for fname in set(files_to_archive) if archive_if_exists(certs_dir / fname, archive_dir))
-        print(f"   Archived files: {archived_count}\n")
+        print(f"   Archived files: {archived_count}\\n")
 
     # Создание структуры директорий
     (certs_dir / "ca").mkdir(parents=True, exist_ok=True)
@@ -326,17 +365,22 @@ def main():
     (certs_dir / "vm2" / "client").mkdir(parents=True, exist_ok=True)
     (certs_dir / "vm2" / "pg").mkdir(parents=True, exist_ok=True)
     (certs_dir / "vm2" / "redis").mkdir(parents=True, exist_ok=True)
+    (certs_dir / "vm2" / "seaweedfs").mkdir(parents=True, exist_ok=True)
     (certs_dir / "gpu-node").mkdir(parents=True, exist_ok=True)
     (certs_dir / "browser").mkdir(parents=True, exist_ok=True)
 
-    # 1. КОРПОРАТИВНЫЙ ROOT CA
-    print("[1/7] Generating Corporate Root CA (ECC P-384)...")
-    ca_key, ca_cert = build_root_ca(common_name="Factory Agents Platform Root CA", organization=organization)
-    save_private_key(ca_key, certs_dir / "ca" / "corp-ca.key")
-    save_certificate(ca_cert, certs_dir / "ca" / "corp-ca.crt")
-    print(f"   CN: Factory Agents Platform Root CA")
-    print(f"   Fingerprint: {fingerprint(ca_cert)}")
-    print(f"   [!] Храните {certs_dir / 'ca' / 'corp-ca.key'} в секрете!\n")
+    # 1. Corporate Root CA: preserve existing trust anchor when refreshing leaf certificates.
+    if existing_ca:
+        ca_key, ca_cert = existing_ca
+        print("[1/8] Reusing existing Corporate Root CA (not rotated).")
+    else:
+        print("[1/7] Generating Corporate Root CA (ECC P-384)...")
+        ca_key, ca_cert = build_root_ca(common_name="Factory Agents Platform Root CA", organization=organization)
+        save_private_key(ca_key, certs_dir / "ca" / "corp-ca.key")
+        save_certificate(ca_cert, certs_dir / "ca" / "corp-ca.crt")
+        print(f"   CN: Factory Agents Platform Root CA")
+        print(f"   Fingerprint: {fingerprint(ca_cert)}")
+        print(f"   [!] Храните {certs_dir / 'ca' / 'corp-ca.key'} в секрете!\\n")
 
     # 2. NGINX TLS (ВМ №1)
     print("[2/7] Generating nginx TLS certificate (ВМ №1)...")
@@ -387,8 +431,19 @@ def main():
     shutil.copy2(certs_dir / "ca" / "corp-ca.crt", certs_dir / "vm2" / "redis" / "ca.crt")
     print(f"   CN: redis-factory | SAN: redis-factory, localhost\n")
 
-    # 6. СЕРВЕРНЫЙ СЕРТИФИКАТ GPU-УЗЛА (Узел №3)
-    print("[6/7] Generating GPU Node server certificate (Узел №3)...")
+    # 6. SEAWEEDFS S3 SERVER CERTIFICATE (ВМ №2)
+    print("[6/8] Generating SeaweedFS S3 server certificate (ВМ №2)...")
+    s3_key, s3_cert = build_node_certificate(
+        ca_key=ca_key, ca_cert=ca_cert, common_name="seaweedfs-s3",
+        organization=organization, dns_names=["seaweedfs-s3", "localhost"], ip_addresses=[],
+        is_server=True, is_client=False,
+    )
+    save_private_key(s3_key, certs_dir / "vm2" / "seaweedfs" / "s3-server.key")
+    save_certificate(s3_cert, certs_dir / "vm2" / "seaweedfs" / "s3-server.crt")
+    print("   CN: seaweedfs-s3 | SAN: seaweedfs-s3, localhost\\n")
+
+    # 7. СЕРВЕРНЫЙ СЕРТИФИКАТ GPU-УЗЛА (Узел №3)
+    print("[7/8] Generating GPU Node server certificate (Узел №3)...")
     gpu_key, gpu_cert = build_node_certificate(
         ca_key=ca_key, ca_cert=ca_cert, common_name="gpu-node.corp.example.com",
         organization=organization, dns_names=["gpu-node.corp.example.com", "localhost"], ip_addresses=[],
@@ -400,7 +455,7 @@ def main():
     print(f"   CN: gpu-node.corp.example.com | SAN: gpu-node, localhost\n")
 
     # 7. КЛИЕНТСКИЙ СЕРТИФИКАТ ДЛЯ БРАУЗЕРА (Опционально, для mTLS админ-доступа)
-    print("[7/7] Generating browser client certificate (Опционально)...")
+    print("[8/8] Generating browser client certificate (Опционально)...")
     browser_key, browser_cert = build_node_certificate(
         ca_key=ca_key, ca_cert=ca_cert, common_name="browser-admin",
         organization=organization, dns_names=[], ip_addresses=[],

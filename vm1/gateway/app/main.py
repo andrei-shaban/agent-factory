@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     redis_factory_tls: bool = True
 
     # Имя очереди для постановки задач (согласовано с broker ВМ №2)
-    task_queue_name: str = "factory:tasks"
+    task_queue_name: str = "agui:tasks"
 
     # PostgreSQL runtime (ВМ №2) — для реестра ранов
     # Схема postgresql+ssl:// с sslmode=require — для TLS-подключения (Blueprint §3.1)

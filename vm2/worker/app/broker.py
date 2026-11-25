@@ -18,7 +18,7 @@ settings = get_settings()
 # ListQueueBroker использует Redis Lists (LPUSH/BRPOP) для надежной доставки задач.
 broker = ListQueueBroker(
     url=settings.redis_factory_url,
-    queue_name="factory:tasks",
+    queue_name="agui:tasks",
     # serializer по умолчанию использует JSON (orjson, если установлен)
 )
 

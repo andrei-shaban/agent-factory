@@ -26,6 +26,11 @@ import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from typing import Dict, List, Optional, Tuple
 
 # ==============================================================================
@@ -104,8 +109,9 @@ def gen_hex(num_bytes: int) -> str:
     return secrets.token_hex(num_bytes)
 
 
-def build_vm1_secrets() -> Dict[str, str]:
-    """Полный набор секретов для ВМ №1."""
+def build_vm1_secrets(existing: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Return existing VM1 credentials and generate only values not already configured."""
+    existing = existing or {}
     new_secrets = {
         # PostgreSQL Auth & Observability
         "POSTGRES_AUTH_PASSWORD": gen_32_pass(),
@@ -132,6 +138,8 @@ def build_vm1_secrets() -> Dict[str, str]:
         "S3_SECRET_KEY": gen_alnum(40),
     }
 
+    new_secrets = {key: (existing.get(key) or value) for key, value in new_secrets.items()}
+
     # URL-encoded пары для connection strings
     urlencoded = {
         "CLICKHOUSE_PASSWORD_URLENCODED": "CLICKHOUSE_PASSWORD",
@@ -146,11 +154,12 @@ def build_vm1_secrets() -> Dict[str, str]:
     return new_secrets
 
 
-def build_vm2_secrets(shared: Dict[str, str]) -> Dict[str, str]:
+def build_vm2_secrets(shared: Dict[str, str], existing: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """
     Набор секретов для ВМ №2.
     Общие ключи берутся из ВМ №1 (передаются параметром shared).
     """
+    existing = existing or {}
     new_secrets = {
         # Локальные ключи ВМ №2
         "POSTGRES_RUNTIME_PASSWORD": gen_32_pass(),
@@ -160,19 +169,17 @@ def build_vm2_secrets(shared: Dict[str, str]) -> Dict[str, str]:
         "CORP_PG_PASSWORD": gen_32_pass(),
     }
 
-    # Общие ключи: из ВМ №1 или генерируем заново (если ВМ №1 не инициализирована)
-    new_secrets["GATEWAY_DB_PASSWORD"] = shared.get("GATEWAY_DB_PASSWORD", gen_32_pass())
-    new_secrets["REDIS_FACTORY_ACL_PASSWORD"] = shared.get(
-        "REDIS_FACTORY_ACL_PASSWORD", gen_acl_password()
-    )
-    new_secrets["S3_ACCESS_KEY"] = shared.get("S3_ACCESS_KEY", gen_alnum(20, upper_only=True))
-    new_secrets["S3_SECRET_KEY"] = shared.get("S3_SECRET_KEY", gen_alnum(40))
-    new_secrets["LANGFUSE_PUBLIC_KEY"] = shared.get(
-        "LANGFUSE_PUBLIC_KEY", f"pk-lf-{gen_alnum(16)}"
-    )
-    new_secrets["LANGFUSE_SECRET_KEY"] = shared.get(
-        "LANGFUSE_SECRET_KEY", f"sk-lf-{gen_alnum(48)}"
-    )
+    # Preserve local DB credentials; shared VM1 values are authoritative when present.
+    new_secrets = {key: (existing.get(key) or value) for key, value in new_secrets.items()}
+    for key, fallback in {
+        "GATEWAY_DB_PASSWORD": gen_32_pass(),
+        "REDIS_FACTORY_ACL_PASSWORD": gen_acl_password(),
+        "S3_ACCESS_KEY": gen_alnum(20, upper_only=True),
+        "S3_SECRET_KEY": gen_alnum(40),
+        "LANGFUSE_PUBLIC_KEY": f"pk-lf-{gen_alnum(16)}",
+        "LANGFUSE_SECRET_KEY": f"sk-lf-{gen_alnum(48)}",
+    }.items():
+        new_secrets[key] = shared.get(key) or existing.get(key) or fallback
 
     return new_secrets
 
@@ -253,6 +260,7 @@ def render_file(
     dst_path: Path,
     env_vars: Dict[str, str],
     clean_underscore_keys: bool = False,
+    s3_iam_only: bool = False,
 ) -> bool:
     """Рендеринг одного файла."""
     if not src_path.exists():
@@ -264,12 +272,25 @@ def render_file(
     content = src_path.read_text(encoding="utf-8")
     rendered = substitute_vars(content, env_vars)
 
-    if src_path.suffix == ".json" and clean_underscore_keys:
+    if src_path.suffix == ".json" and (clean_underscore_keys or s3_iam_only):
         try:
             data = json.loads(rendered)
             cleaned = clean_json_keys(data)
+            if s3_iam_only:
+                identities = []
+                for identity in cleaned.get("identities", []):
+                    rendered_identity = {key: identity[key] for key in ("name", "credentials") if key in identity}
+                    actions = set(identity.get("actions", [])) - {"Admin"}
+                    for bucket_rule in identity.get("buckets", []):
+                        bucket = bucket_rule.get("name")
+                        if bucket:
+                            actions.update(f"{action}:{bucket}" for action in bucket_rule.get("actions", []))
+                    if actions:
+                        rendered_identity["actions"] = sorted(actions)
+                    identities.append(rendered_identity)
+                cleaned = {"identities": identities}
             rendered = json.dumps(cleaned, ensure_ascii=False, indent=2)
-            json.loads(rendered)  # валидация
+            json.loads(rendered)  # validate rendered JSON
         except json.JSONDecodeError as e:
             log_error(f"Ошибка JSON в {src_path}: {e}")
             return False
@@ -282,7 +303,7 @@ def render_file(
 # ИНИЦИАЛИЗАЦИЯ ВМ
 # ==============================================================================
 def init_vm1() -> Dict[str, str]:
-    """Initialize VM1 while preserving installed credentials and returning shared values."""
+    """Initialize VM1 without rotating installed credentials; return shared configuration."""
     log_step("Инициализация ВМ №1 (периметр, observability)")
 
     if not VM1_DIR.exists():
@@ -295,10 +316,14 @@ def init_vm1() -> Dict[str, str]:
         log_error("Скопируйте .env.example в .env и повторите.")
         sys.exit(1)
 
-    # Preserve current credentials because database volumes and clients already use them.
+    # Preserve credentials already used by persistent database volumes and clients.
     existing = load_env(env_path)
-    generated = build_vm1_secrets()
+    generated = build_vm1_secrets(existing)
     new_secrets = {key: existing.get(key) or value for key, value in generated.items()}
+    for key, value in existing.items():
+        if key not in new_secrets:
+            new_secrets[key] = value
+    new_secrets.setdefault("LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT", f"http://{existing.get('VM2_HOST_IP', '127.0.0.1')}:8333")
     for encoded_key, source_key in {
         "CLICKHOUSE_PASSWORD_URLENCODED": "CLICKHOUSE_PASSWORD",
         "REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED": "REDIS_LANGFUSE_ACL_PASSWORD",
@@ -307,8 +332,18 @@ def init_vm1() -> Dict[str, str]:
         "GATEWAY_DB_PASSWORD_URLENCODED": "GATEWAY_DB_PASSWORD",
     }.items():
         new_secrets[encoded_key] = urllib.parse.quote(new_secrets[source_key], safe="")
+    new_secrets.update(existing)
+    for key, source_key in {
+        "CLICKHOUSE_PASSWORD_URLENCODED": "CLICKHOUSE_PASSWORD",
+        "REDIS_LANGFUSE_ACL_PASSWORD_URLENCODED": "REDIS_LANGFUSE_ACL_PASSWORD",
+        "LANGFUSE_DB_PASSWORD_URLENCODED": "LANGFUSE_DB_PASSWORD",
+        "REDIS_FACTORY_ACL_PASSWORD_URLENCODED": "REDIS_FACTORY_ACL_PASSWORD",
+        "GATEWAY_DB_PASSWORD_URLENCODED": "GATEWAY_DB_PASSWORD",
+    }.items():
+        if new_secrets.get(source_key):
+            new_secrets[key] = urllib.parse.quote(new_secrets[source_key], safe="")
     replaced = update_env_file(env_path, new_secrets)
-    log_info(f"Existing credentials preserved; initialized/synchronized {replaced} VM1 keys")
+    log_info(f"Existing credentials preserved; initialized/synchronized {replaced} VM1 settings")
 
     # 2. Рендеринг конфигов
     log_info("Рендеринг конфигураций ВМ №1...")
@@ -321,10 +356,8 @@ def init_vm1() -> Dict[str, str]:
         log_error(f"Отсутствуют переменные в vm1/.env: {', '.join(missing)}")
         sys.exit(1)
 
-    # Очистка старой rendered/
+    # Preserve other rendered artifacts; overwrite only files owned by this initializer.
     rendered_dir = VM1_DIR / "rendered"
-    if rendered_dir.exists():
-        shutil.rmtree(rendered_dir)
     rendered_dir.mkdir(parents=True, exist_ok=True)
 
     success_count = 0
@@ -374,8 +407,15 @@ def init_vm2(shared: Dict[str, str]) -> None:
 
     # 1. Генерация секретов с синхронизацией из ВМ №1
     existing = load_env(env_path)
-    generated = build_vm2_secrets(shared)
-    new_secrets = {key: existing.get(key) or value for key, value in generated.items()}
+    generated = build_vm2_secrets(shared, existing)
+    new_secrets = dict(existing)
+    new_secrets.update({key: existing.get(key) or value for key, value in generated.items()})
+    if existing.get("GPU_NODE_IP"):
+        new_secrets["GPU_NODE_IP"] = existing["GPU_NODE_IP"]
+    for key in ("GATEWAY_DB_PASSWORD", "REDIS_FACTORY_ACL_PASSWORD", "S3_ACCESS_KEY", "S3_SECRET_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        if shared.get(key):
+            new_secrets[key] = shared[key]
+    new_secrets.update(existing)
     for key in ("GATEWAY_DB_PASSWORD", "REDIS_FACTORY_ACL_PASSWORD", "S3_ACCESS_KEY", "S3_SECRET_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         if shared.get(key):
             new_secrets[key] = shared[key]
@@ -401,9 +441,8 @@ def init_vm2(shared: Dict[str, str]) -> None:
         log_error(f"Отсутствуют переменные в vm2/.env: {', '.join(missing)}")
         sys.exit(1)
 
+    # Preserve unrelated artifacts under rendered/; replace only generated config files.
     rendered_dir = VM2_DIR / "rendered"
-    if rendered_dir.exists():
-        shutil.rmtree(rendered_dir)
     rendered_dir.mkdir(parents=True, exist_ok=True)
 
     success_count = 0
@@ -411,7 +450,7 @@ def init_vm2(shared: Dict[str, str]) -> None:
     for src_rel, dst_rel in VM2_RENDER_FILES:
         src_path = VM2_DIR / src_rel
         dst_path = VM2_DIR / dst_rel
-        if render_file(src_path, dst_path, env_vars, clean_underscore_keys=False):
+        if render_file(src_path, dst_path, env_vars, clean_underscore_keys=False, s3_iam_only=(src_path.name == "s3.json")):
             log_info(f"  ✓ {src_rel} → {dst_rel}")
             success_count += 1
         else:
@@ -422,6 +461,33 @@ def init_vm2(shared: Dict[str, str]) -> None:
         sys.exit(1)
 
     log_info(f"ВМ №2 готова: {success_count} файлов отрендерено")
+
+    # GPU_NODE_IP is optional when corporate DNS resolves the configured GPU_ENDPOINT_URL.
+    gpu_endpoint = env_vars.get("GPU_ENDPOINT_URL", "").strip()
+    gpu_node_ip = env_vars.get("GPU_NODE_IP", "").strip()
+    if gpu_node_ip:
+        try:
+            import ipaddress
+            ipaddress.ip_address(gpu_node_ip)
+            log_info("GPU endpoint override validated")
+        except ValueError:
+            log_error("GPU_NODE_IP must be a valid address; refusing to invent a GPU route")
+            sys.exit(1)
+    elif gpu_endpoint:
+        from urllib.parse import urlparse
+        gpu_host = urlparse(gpu_endpoint).hostname
+        if gpu_host:
+            try:
+                import socket
+                socket.getaddrinfo(gpu_host, None)
+                log_info("GPU endpoint hostname resolves using host DNS")
+            except OSError:
+                log_warn(f"GPU endpoint host {gpu_host} is not resolvable here; GPU node/network must provide it before runtime calls")
+
+    network = subprocess.run(["docker", "network", "inspect", "factory-cross-vm"], capture_output=True, text=True)
+    if network.returncode != 0:
+        subprocess.run(["docker", "network", "create", "factory-cross-vm"], check=True)
+
 
 
 # ==============================================================================
@@ -443,8 +509,13 @@ def main() -> int:
         # Инициализация ВМ №1 (возвращает общие секреты)
         shared = init_vm1()
 
-        # Инициализация ВМ №2 (синхронизирует общие секреты)
+        # Инициализация ВМ №2 (синхронизирует общие ключи)
         init_vm2(shared)
+
+        network = subprocess.run(["docker", "network", "inspect", "factory-cross-vm"], capture_output=True, text=True)
+        if network.returncode != 0:
+            subprocess.run(["docker", "network", "create", "factory-cross-vm"], check=True)
+            log_info("Shared cross-VM Docker network created")
 
         print()
         print("=" * 60)

@@ -390,6 +390,8 @@ services:
       - -port=8333
       - -ip.bind=0.0.0.0
       - -config=/etc/seaweedfs/s3.json
+      - -cert.file=/etc/seaweedfs/tls/s3-server.crt
+      - -key.file=/etc/seaweedfs/tls/s3-server.key
     environment:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
@@ -398,7 +400,10 @@ services:
       # S3 для Langfuse (ВМ №1) и воркеров; path-style обязателен
       - "${VM2_HOST_IP}:8333:8333"
     volumes:
-      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - ./rendered/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - ../certs/vm2/seaweedfs/s3-server.crt:/etc/seaweedfs/tls/s3-server.crt:ro
+      - ../certs/vm2/seaweedfs/s3-server.key:/etc/seaweedfs/tls/s3-server.key:ro
+      - ../certs/ca/corp-ca.crt:/etc/seaweedfs/tls/ca.crt:ro
     depends_on:
       seaweedfs-filer:
         condition: service_healthy
@@ -422,7 +427,7 @@ services:
       # Разрешено: создание/запуск/удаление песочниц и exec в них
       CONTAINERS: "1"
       POST: "1"
-      EXEC: "1"
+      EXEC: "0"
       # Запрещено всё остальное
       NETWORKS: "0"
       VOLUMES: "0"
@@ -443,10 +448,9 @@ services:
       EVENTS: "0"
       PING: "1"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${SANDBOX_DOCKER_SOCKET:-/run/user/1000/docker.sock}:/var/run/docker.sock:ro
     networks:
       - internal
-      - cross-vm
     security_opt:
       - no-new-privileges:true
     logging:
