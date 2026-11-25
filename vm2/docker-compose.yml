@@ -67,7 +67,7 @@ services:
       SEAWEED_S3_BUCKET_FACTORY: ${SEAWEED_S3_BUCKET_FACTORY:-factory-artifacts}
       SEAWEED_S3_BUCKET_BACKUPS: ${SEAWEED_S3_BUCKET_BACKUPS:-postgres-backups}
       # Sandbox control is disabled in the normal worker profile; opt in only with its rootless daemon endpoint.
-      DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://sandbox-disabled:2375}
+      DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://docker-socket-proxy:2375}
       SANDBOX_RUNTIME: runsc
       SANDBOX_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2.0}
       SANDBOX_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
