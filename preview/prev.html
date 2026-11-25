@@ -1,0 +1,2996 @@
+<!doctype html>
+<html lang="ru" data-theme="light" data-density="comfort">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Фабрика агентов — Операционная панель (Preview)</title>
+
+  <style>
+    /* ============================================================
+       Preview CSS — производная от globals.css концепции
+       Без Tailwind/shadcn runtime, чтобы открыть локально в браузере.
+       ============================================================ */
+
+    :root {
+      color-scheme: light;
+
+      /* Brand tokens */
+      --color-bg-primary: #f6f6f6;
+      --color-bg-secondary: #ffffff;
+      --color-bg-tertiary: #eaeaea;
+      --color-text-primary: #202020;
+      --color-text-secondary: #5b5b66;
+      --color-border: #cccccc;
+      --color-accent: #7a6748;
+      --color-accent-hover: #6b5a40;
+      --color-gold-soft: #c9a674;
+      --color-success: #4a6b4a;
+      --color-warning: #96551d;
+      --color-danger: #8a3a3a;
+      --color-info: #35688a;
+
+      /* Roles */
+      --background: var(--color-bg-primary);
+      --foreground: var(--color-text-primary);
+      --card: var(--color-bg-secondary);
+      --card-foreground: var(--color-text-primary);
+      --muted: var(--color-bg-tertiary);
+      --muted-foreground: var(--color-text-secondary);
+      --border: var(--color-border);
+      --input: var(--color-border);
+      --primary: var(--color-accent);
+      --primary-foreground: #ffffff;
+      --secondary: var(--color-bg-tertiary);
+      --secondary-foreground: var(--color-text-primary);
+      --accent-surface: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary));
+      --accent-surface-foreground: var(--color-text-primary);
+      --destructive: var(--color-danger);
+      --destructive-foreground: #ffffff;
+      --success: var(--color-success);
+      --warning: var(--color-warning);
+      --info: var(--color-info);
+      --ring: var(--color-accent);
+
+      /* Geometry */
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+
+      /* Spacing */
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+
+      /* Typography */
+      --text-xs: 11px;
+      --text-sm: 12.5px;
+      --text-base: 13.5px;
+      --text-md: 14px;
+      --text-lg: 16px;
+      --text-xl: 18px;
+      --text-2xl: 20px;
+      --text-3xl: 24px;
+
+      /* Z-index */
+      --z-sticky: 200;
+      --z-dropdown: 100;
+      --z-modal-backdrop: 400;
+      --z-modal: 500;
+      --z-popover: 600;
+      --z-tooltip: 700;
+      --z-toast: 800;
+
+      /* Shadows */
+      --shadow-xs: 0 1px 2px rgb(0 0 0 / .05);
+      --shadow-sm: 0 2px 4px rgb(0 0 0 / .08);
+      --shadow-md: 0 4px 8px rgb(0 0 0 / .12);
+      --shadow-lg: 0 8px 16px rgb(0 0 0 / .16);
+      --shadow-xl: 0 12px 24px rgb(0 0 0 / .20);
+
+      /* Motion */
+      --ease-in: cubic-bezier(0.4, 0, 1, 1);
+      --ease-out: cubic-bezier(0, 0, 0.2, 1);
+      --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+      --duration-fast: 100ms;
+      --duration-normal: 150ms;
+      --duration-slow: 250ms;
+    }
+
+    .dark {
+      color-scheme: dark;
+
+      --color-bg-primary: #0f0e0d;
+      --color-bg-secondary: #1a1816;
+      --color-bg-tertiary: #252220;
+      --color-text-primary: #f0ece6;
+      --color-text-secondary: #a09688;
+      --color-border: #3d352d;
+      --color-accent: #b08d57;
+      --color-accent-hover: #c9a674;
+      --color-gold-soft: #8a6d3d;
+      --color-success: #86c07a;
+      --color-warning: #e0a33e;
+      --color-danger: #e07a6a;
+      --color-info: #7cc0e8;
+
+      --primary-foreground: #171310;
+      --destructive-foreground: #241110;
+      --accent-surface: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-secondary));
+    }
+
+    [data-density="compact"] {
+      --space-1: 3px;
+      --space-2: 6px;
+      --space-3: 8px;
+      --space-4: 10px;
+      --space-5: 14px;
+      --space-6: 20px;
+      --radius-md: 10px;
+      --radius-lg: 12px;
+      --text-base: 13px;
+      --text-md: 13.5px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+    }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 2px;
+      border-radius: 6px;
+    }
+
+    ::selection {
+      background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .num {
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+      min-height: 0;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-2) var(--space-4);
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+      position: sticky;
+      top: 0;
+      z-index: var(--z-sticky);
+      min-height: 52px;
+    }
+
+    .brand {
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    .brand-accent {
+      color: var(--color-accent);
+    }
+
+    .breadcrumb {
+      color: var(--muted-foreground);
+      font-size: var(--text-sm);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .spacer {
+      flex: 1;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: var(--text-sm);
+      color: var(--muted-foreground);
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      flex: none;
+    }
+
+    .status[data-state="reconnecting"] .status-dot {
+      background: var(--warning);
+      animation: pulse 1.2s var(--ease-in-out) infinite;
+    }
+
+    .status[data-state="offline-alive"] .status-dot {
+      background: var(--muted-foreground);
+    }
+
+    .status[data-state="error"] .status-dot {
+      background: var(--destructive);
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      min-height: 0;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: var(--card);
+      padding: var(--space-3);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+      overflow: auto;
+      min-height: 0;
+    }
+
+    .nav-section-title {
+      font-size: var(--text-xs);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--muted-foreground);
+      margin: var(--space-2) 0 var(--space-1);
+      padding-left: var(--space-2);
+    }
+
+    .nav-btn {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-3);
+      color: var(--foreground);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      transition:
+        background-color var(--duration-normal) var(--ease-in-out),
+        border-color var(--duration-normal) var(--ease-in-out);
+    }
+
+    .nav-btn:hover {
+      background: var(--accent-surface);
+    }
+
+    .nav-btn[aria-current="page"] {
+      background: color-mix(in srgb, var(--color-accent) 12%, var(--card));
+      border-color: color-mix(in srgb, var(--color-accent) 22%, var(--border));
+      font-weight: 700;
+      box-shadow: inset 2px 0 0 var(--color-accent);
+    }
+
+    .nav-icon {
+      width: 18px;
+      text-align: center;
+      color: var(--muted-foreground);
+    }
+
+    .main {
+      overflow: auto;
+      padding: var(--space-4);
+      min-height: 0;
+    }
+
+    .view {
+      display: none;
+      min-height: 100%;
+    }
+
+    .view.active {
+      display: block;
+    }
+
+    .page-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--space-3);
+      margin-bottom: var(--space-4);
+      flex-wrap: wrap;
+    }
+
+    .page-title {
+      margin: 0;
+      font-size: var(--text-2xl);
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+    }
+
+    .page-subtitle {
+      margin: 4px 0 0;
+      color: var(--muted-foreground);
+      font-size: var(--text-base);
+    }
+
+    .card {
+      background: var(--card);
+      color: var(--card-foreground);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--space-3);
+      margin-bottom: var(--space-3);
+    }
+
+    .card-title {
+      margin: 0;
+      font-size: var(--text-lg);
+      font-weight: 750;
+    }
+
+    .card-description {
+      margin: 4px 0 0;
+      color: var(--muted-foreground);
+      font-size: var(--text-sm);
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+
+    .dashboard-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      box-shadow: var(--shadow-sm);
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .dashboard-card-title {
+      color: var(--muted-foreground);
+      font-size: var(--text-sm);
+      margin-bottom: var(--space-2);
+    }
+
+    .dashboard-card-value {
+      font-size: var(--text-3xl);
+      font-weight: 850;
+      line-height: 1;
+      margin-bottom: var(--space-2);
+    }
+
+    .dashboard-card-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+      color: var(--muted-foreground);
+      font-size: var(--text-xs);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, .85fr);
+      gap: var(--space-3);
+    }
+
+    .catalog-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: var(--space-3);
+    }
+
+    .scenario-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+
+    .scenario-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--space-2);
+    }
+
+    .scenario-name {
+      font-weight: 800;
+      font-size: var(--text-lg);
+      margin: 0;
+    }
+
+    .scenario-desc {
+      color: var(--muted-foreground);
+      font-size: var(--text-base);
+      margin: 0;
+      min-height: 42px;
+    }
+
+    .scenario-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+      color: var(--muted-foreground);
+      font-size: var(--text-xs);
+    }
+
+    .scenario-actions {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      margin-top: auto;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      min-height: 36px;
+      padding: 8px var(--space-3);
+      border-radius: var(--radius-md);
+      border: 1px solid transparent;
+      font-weight: 700;
+      font-size: var(--text-base);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      transition:
+        background-color var(--duration-normal) var(--ease-in-out),
+        border-color var(--duration-normal) var(--ease-in-out),
+        color var(--duration-normal) var(--ease-in-out),
+        box-shadow var(--duration-normal) var(--ease-in-out);
+    }
+
+    .btn:disabled,
+    .btn.is-locked {
+      opacity: .6;
+      pointer-events: none;
+    }
+
+    .btn-sm {
+      min-height: 30px;
+      padding: 5px 10px;
+      font-size: var(--text-sm);
+      border-radius: var(--radius-sm);
+    }
+
+    .btn-primary {
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--primary) 88%, white 12%),
+        var(--primary)
+      );
+      color: var(--primary-foreground);
+      border-color: color-mix(in srgb, var(--primary) 70%, black 30%);
+      box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / .18),
+        0 6px 14px color-mix(in srgb, var(--primary) 22%, transparent);
+    }
+
+    .btn-primary:hover {
+      background: var(--color-accent-hover);
+    }
+
+    .btn-secondary {
+      background: var(--secondary);
+      color: var(--secondary-foreground);
+      border-color: var(--border);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--foreground);
+      border-color: var(--border);
+    }
+
+    .btn-outline:hover {
+      background: var(--accent-surface);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted-foreground);
+    }
+
+    .btn-ghost:hover {
+      background: var(--accent-surface);
+      color: var(--foreground);
+    }
+
+    .btn-danger {
+      color: var(--destructive);
+      background: color-mix(in srgb, var(--destructive) 12%, transparent);
+      border-color: color-mix(in srgb, var(--destructive) 35%, transparent);
+    }
+
+    .btn-icon {
+      width: 36px;
+      min-width: 36px;
+      padding: 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--muted);
+      color: var(--muted-foreground);
+      padding: 3px 10px;
+      font-size: var(--text-xs);
+      font-weight: 800;
+      letter-spacing: .02em;
+      white-space: nowrap;
+    }
+
+    .badge::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex: none;
+    }
+
+    .badge[data-state="running"] {
+      color: var(--info);
+      background: color-mix(in srgb, var(--info) 11%, transparent);
+      border-color: color-mix(in srgb, var(--info) 34%, transparent);
+    }
+
+    .badge[data-state="waiting-hitl"],
+    .badge[data-state="waiting"],
+    .badge[data-state="paused"] {
+      color: var(--warning);
+      background: color-mix(in srgb, var(--warning) 11%, transparent);
+      border-color: color-mix(in srgb, var(--warning) 36%, transparent);
+    }
+
+    .badge[data-state="done"],
+    .badge[data-state="approved"],
+    .badge[data-state="success"] {
+      color: var(--success);
+      background: color-mix(in srgb, var(--success) 11%, transparent);
+      border-color: color-mix(in srgb, var(--success) 34%, transparent);
+    }
+
+    .badge[data-state="failed"],
+    .badge[data-state="rejected"],
+    .badge[data-state="error"],
+    .badge[data-state="danger"] {
+      color: var(--destructive);
+      background: color-mix(in srgb, var(--destructive) 11%, transparent);
+      border-color: color-mix(in srgb, var(--destructive) 36%, transparent);
+    }
+
+    .badge[data-state="queued"],
+    .badge[data-state="muted"],
+    .badge[data-state="deprecated"] {
+      color: var(--muted-foreground);
+      background: var(--muted);
+      border-color: var(--border);
+    }
+
+    .badge[data-state="offline-alive"] {
+      color: var(--color-accent);
+      background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+      border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+    }
+
+    .badge[data-state="gold"] {
+      color: var(--color-accent);
+      background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+      border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+    }
+
+    .banner {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 10px var(--space-3);
+      font-size: var(--text-base);
+      background: var(--muted);
+      color: var(--foreground);
+    }
+
+    .banner[data-tone="info"] {
+      color: var(--info);
+      background: color-mix(in srgb, var(--info) 10%, transparent);
+      border-color: color-mix(in srgb, var(--info) 34%, transparent);
+    }
+
+    .banner[data-tone="warning"] {
+      color: var(--warning);
+      background: color-mix(in srgb, var(--warning) 10%, transparent);
+      border-color: color-mix(in srgb, var(--warning) 36%, transparent);
+    }
+
+    .banner[data-tone="danger"] {
+      color: var(--destructive);
+      background: color-mix(in srgb, var(--destructive) 10%, transparent);
+      border-color: color-mix(in srgb, var(--destructive) 36%, transparent);
+    }
+
+    .banner[data-tone="success"] {
+      color: var(--success);
+      background: color-mix(in srgb, var(--success) 10%, transparent);
+      border-color: color-mix(in srgb, var(--success) 34%, transparent);
+    }
+
+    .input,
+    .select,
+    textarea.input {
+      width: 100%;
+      background: var(--card);
+      color: var(--foreground);
+      border: 1px solid var(--input);
+      border-radius: var(--radius-md);
+      padding: 8px var(--space-3);
+      min-height: 36px;
+    }
+
+    textarea.input {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .input::placeholder {
+      color: color-mix(in srgb, var(--muted-foreground) 75%, transparent);
+    }
+
+    .input:focus-visible,
+    .select:focus-visible,
+    textarea.input:focus-visible {
+      outline: none;
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .label {
+      font-size: var(--text-sm);
+      color: var(--muted-foreground);
+      font-weight: 650;
+    }
+
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--card);
+      overflow: auto;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--text-base);
+    }
+
+    .table th {
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      background: var(--muted);
+      color: var(--muted-foreground);
+      padding: 10px var(--space-3);
+      font-size: var(--text-xs);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      white-space: nowrap;
+    }
+
+    .table td {
+      padding: 10px var(--space-3);
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+      vertical-align: middle;
+    }
+
+    .table tbody tr:hover {
+      background: var(--accent-surface);
+    }
+
+    .table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .filters {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      margin-bottom: var(--space-3);
+    }
+
+    .run-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: var(--space-3);
+      min-height: calc(100vh - 150px);
+    }
+
+    .feed {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .feed-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+      padding: var(--space-3);
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--muted) 60%, var(--card));
+    }
+
+    .feed-title {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-width: 0;
+    }
+
+    .feed-title strong {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .feed-scroll {
+      padding: var(--space-3);
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      flex: 1;
+      min-height: 0;
+    }
+
+    .msg {
+      display: grid;
+      gap: 6px;
+      max-width: min(92%, 820px);
+    }
+
+    .msg.user {
+      align-self: flex-end;
+      margin-left: auto;
+    }
+
+    .msg.agent {
+      align-self: flex-start;
+    }
+
+    .msg-bubble {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3);
+    }
+
+    .msg.user .msg-bubble {
+      background: color-mix(in srgb, var(--primary) 12%, var(--card));
+    }
+
+    .msg-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: var(--text-xs);
+      color: var(--muted-foreground);
+    }
+
+    .thought {
+      color: var(--muted-foreground);
+      border: 1px dashed var(--border);
+      background: var(--muted);
+      border-radius: var(--radius-md);
+      padding: 10px var(--space-3);
+      font-size: var(--text-base);
+    }
+
+    .tool-card {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+
+    .tool-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+      background: var(--muted);
+      border-bottom: 1px solid var(--border);
+      padding: 9px var(--space-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--text-sm);
+    }
+
+    .tool-body {
+      padding: 10px var(--space-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--text-sm);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: var(--muted-foreground);
+    }
+
+    .hitl {
+      background: var(--card);
+      border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 9%, transparent);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3);
+      display: grid;
+      gap: var(--space-3);
+    }
+
+    .hitl[data-state="approved"] {
+      border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 9%, transparent);
+    }
+
+    .hitl[data-state="rejected"] {
+      border-color: color-mix(in srgb, var(--destructive) 42%, var(--border));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--destructive) 9%, transparent);
+    }
+
+    .hitl[data-state="locked"] {
+      opacity: .92;
+    }
+
+    .hitl-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+    }
+
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--text-base);
+    }
+
+    .diff-table th,
+    .diff-table td {
+      border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+
+    .diff-table th {
+      background: var(--muted);
+      color: var(--muted-foreground);
+      text-align: left;
+      font-size: var(--text-xs);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .diff-add {
+      background: color-mix(in srgb, var(--success) 14%, transparent);
+      color: var(--success);
+      font-weight: 750;
+    }
+
+    .diff-del {
+      background: color-mix(in srgb, var(--destructive) 12%, transparent);
+      color: var(--destructive);
+      text-decoration: line-through;
+    }
+
+    .gate {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-md);
+      padding: 10px var(--space-3);
+      font-size: var(--text-base);
+      cursor: pointer;
+      user-select: none;
+      background: color-mix(in srgb, var(--muted) 45%, var(--card));
+    }
+
+    .gate input {
+      margin-top: 2px;
+      accent-color: var(--primary);
+      width: 16px;
+      height: 16px;
+      flex: none;
+    }
+
+    .gate.error {
+      border-color: var(--destructive);
+      animation: shake var(--duration-slow) var(--ease-in-out);
+    }
+
+    .audit {
+      color: var(--muted-foreground);
+      border: 1px dashed var(--border);
+      width: max-content;
+      max-width: 100%;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--text-xs);
+      overflow-wrap: anywhere;
+    }
+
+    .trace-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--info);
+      font-size: var(--text-sm);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-decoration: none;
+    }
+
+    .trace-link:hover {
+      text-decoration: underline;
+    }
+
+    .stream-caret {
+      display: inline-block;
+      width: 8px;
+      height: 1em;
+      margin-left: 3px;
+      vertical-align: -2px;
+      background: var(--color-accent);
+      animation: blink 1s steps(2) infinite;
+    }
+
+    .skeleton {
+      height: 12px;
+      border-radius: 8px;
+      background: linear-gradient(
+        90deg,
+        var(--muted),
+        color-mix(in srgb, var(--border) 55%, var(--muted)),
+        var(--muted)
+      );
+      background-size: 200% 100%;
+      animation: shimmer 1.3s linear infinite;
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      animation: spin .7s linear infinite;
+      display: inline-block;
+      flex: none;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 14px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      font-size: var(--text-base);
+    }
+
+    .step .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--border);
+    }
+
+    .step[data-state="done"] .dot {
+      background: var(--success);
+    }
+
+    .step[data-state="active"] .dot {
+      background: var(--info);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--info) 18%, transparent);
+    }
+
+    .step[data-state="waiting"] .dot {
+      background: var(--warning);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--warning) 18%, transparent);
+    }
+
+    .step[data-state="future"] {
+      color: var(--muted-foreground);
+    }
+
+    .side-stack {
+      display: grid;
+      gap: var(--space-3);
+      align-content: start;
+      min-height: 0;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: var(--space-2);
+      font-size: var(--text-base);
+    }
+
+    .kv dt {
+      color: var(--muted-foreground);
+    }
+
+    .kv dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .composer {
+      border-top: 1px solid var(--border);
+      padding: var(--space-3);
+      display: grid;
+      gap: var(--space-2);
+      background: color-mix(in srgb, var(--muted) 45%, var(--card));
+    }
+
+    .composer-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: var(--space-2);
+      align-items: end;
+    }
+
+    .composer-tools {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      align-items: center;
+      color: var(--muted-foreground);
+      font-size: var(--text-sm);
+    }
+
+    .switch-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .switch-line input {
+      accent-color: var(--primary);
+      width: 16px;
+      height: 16px;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: var(--space-3);
+      padding: var(--space-6) var(--space-4);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-lg);
+      background: color-mix(in srgb, var(--muted) 35%, var(--card));
+      min-height: 220px;
+    }
+
+    .empty-state-icon {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--muted);
+      color: var(--muted-foreground);
+      font-size: 22px;
+      border: 1px solid var(--border);
+    }
+
+    .empty-state-title {
+      font-size: var(--text-lg);
+      font-weight: 800;
+    }
+
+    .empty-state-description {
+      color: var(--muted-foreground);
+      max-width: 480px;
+      font-size: var(--text-base);
+    }
+
+    .error-boundary {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: var(--space-3);
+      padding: var(--space-5) var(--space-4);
+      background: color-mix(in srgb, var(--destructive) 5%, var(--card));
+      border: 1px solid color-mix(in srgb, var(--destructive) 20%, var(--border));
+      border-radius: var(--radius-lg);
+      min-height: 220px;
+    }
+
+    .error-boundary-title {
+      color: var(--destructive);
+      font-size: var(--text-lg);
+      font-weight: 850;
+    }
+
+    .error-boundary-message {
+      color: var(--muted-foreground);
+      max-width: 560px;
+      font-size: var(--text-base);
+    }
+
+    .toast-container {
+      position: fixed;
+      right: var(--space-4);
+      bottom: var(--space-4);
+      z-index: var(--z-toast);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+      width: min(420px, calc(100vw - 32px));
+      pointer-events: none;
+    }
+
+    .toast {
+      pointer-events: auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-3);
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-2);
+      animation: slide-in var(--duration-slow) var(--ease-out);
+    }
+
+    .toast[data-tone="success"] {
+      border-left: 3px solid var(--success);
+    }
+
+    .toast[data-tone="warning"] {
+      border-left: 3px solid var(--warning);
+    }
+
+    .toast[data-tone="danger"] {
+      border-left: 3px solid var(--destructive);
+    }
+
+    .toast[data-tone="info"] {
+      border-left: 3px solid var(--info);
+    }
+
+    .toast-title {
+      font-weight: 800;
+      font-size: var(--text-base);
+      margin-bottom: 2px;
+    }
+
+    .toast-message {
+      color: var(--muted-foreground);
+      font-size: var(--text-sm);
+    }
+
+    .dialog-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: var(--z-modal-backdrop);
+      background: rgb(0 0 0 / .52);
+      display: grid;
+      place-items: center;
+      padding: var(--space-4);
+      animation: fade-in var(--duration-normal) var(--ease-out);
+    }
+
+    .dialog {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      box-shadow: var(--shadow-xl);
+      width: min(560px, 100%);
+      z-index: var(--z-modal);
+      animation: scale-in var(--duration-normal) var(--ease-in-out);
+    }
+
+    .dialog-title {
+      margin: 0 0 var(--space-2);
+      font-size: var(--text-xl);
+      font-weight: 850;
+    }
+
+    .dialog-description {
+      margin: 0 0 var(--space-4);
+      color: var(--muted-foreground);
+      font-size: var(--text-base);
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+    }
+
+    .kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--muted);
+      color: var(--muted-foreground);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--text-xs);
+      font-weight: 750;
+      box-shadow: var(--shadow-xs);
+    }
+
+    .command-palette {
+      position: fixed;
+      left: 50%;
+      top: 14%;
+      transform: translateX(-50%);
+      z-index: var(--z-modal);
+      width: min(680px, calc(100vw - 32px));
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-xl);
+      overflow: hidden;
+      animation: scale-in var(--duration-normal) var(--ease-out);
+    }
+
+    .command-palette-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: calc(var(--z-modal) - 1);
+      background: rgb(0 0 0 / .42);
+    }
+
+    .command-input {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      background: transparent;
+      color: var(--foreground);
+      padding: var(--space-3);
+      font-size: var(--text-md);
+      outline: none;
+    }
+
+    .command-list {
+      max-height: 420px;
+      overflow: auto;
+      padding: var(--space-2);
+    }
+
+    .command-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      padding: var(--space-2) var(--space-3);
+      cursor: pointer;
+      color: var(--foreground);
+    }
+
+    .command-item:hover,
+    .command-item[aria-selected="true"] {
+      background: var(--accent-surface);
+      border-color: color-mix(in srgb, var(--color-accent) 20%, var(--border));
+    }
+
+    .command-item-main {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .command-item-title {
+      font-weight: 750;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .command-item-desc {
+      color: var(--muted-foreground);
+      font-size: var(--text-sm);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .progress {
+      width: 100%;
+      height: 8px;
+      background: var(--muted);
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--primary);
+      transition: width var(--duration-slow) var(--ease-in-out);
+    }
+
+    .stack {
+      display: grid;
+      gap: var(--space-3);
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+    }
+
+    .muted {
+      color: var(--muted-foreground);
+    }
+
+    .small {
+      font-size: var(--text-sm);
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .state-gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: var(--space-3);
+    }
+
+    .split-view {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-3);
+    }
+
+    @media (max-width: 1100px) {
+      .shell {
+        grid-template-columns: 72px minmax(0, 1fr);
+      }
+
+      .nav-label,
+      .nav-section-title,
+      .brand-full {
+        display: none;
+      }
+
+      .nav-btn {
+        justify-content: center;
+        padding: var(--space-2);
+      }
+
+      .run-layout,
+      .grid-2,
+      .split-view {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .topbar {
+        flex-wrap: wrap;
+      }
+
+      .breadcrumb {
+        order: 5;
+        width: 100%;
+      }
+
+      .main {
+        padding: var(--space-3);
+      }
+
+      .page-head {
+        display: grid;
+      }
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    @keyframes shimmer {
+      to { background-position: -200% 0; }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .45; transform: scale(.9); }
+    }
+
+    @keyframes shake {
+      25% { transform: translateX(-3px); }
+      75% { transform: translateX(3px); }
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes scale-in {
+      from { transform: scale(.96); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    @keyframes slide-in {
+      from { transform: translateX(24px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+
+    @media print {
+      body {
+        background: white;
+        color: black;
+      }
+
+      .topbar,
+      .sidebar,
+      .composer,
+      .toast-container,
+      .dialog-backdrop,
+      .command-palette,
+      .command-palette-backdrop,
+      .no-print {
+        display: none !important;
+      }
+
+      .app {
+        height: auto;
+        display: block;
+      }
+
+      .shell {
+        display: block;
+      }
+
+      .main {
+        padding: 0;
+        overflow: visible;
+      }
+
+      .view {
+        display: block !important;
+        page-break-after: always;
+      }
+
+      .card,
+      .dashboard-card,
+      .hitl,
+      .tool-card,
+      .table-wrap {
+        box-shadow: none;
+        border: 1px solid #ccc;
+        break-inside: avoid;
+      }
+
+      .diff-add {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      .diff-del {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      a[href]::after {
+        content: " (" attr(href) ")";
+        font-size: .8em;
+        color: #666;
+      }
+    }
+
+    @media (forced-colors: active) {
+      .badge::before,
+      .step .dot,
+      .status-dot {
+        forced-color-adjust: none;
+      }
+
+      .btn,
+      .badge,
+      .banner,
+      .card,
+      .hitl,
+      .dialog,
+      .table-wrap {
+        border: 1px solid ButtonText;
+      }
+
+      :focus-visible {
+        outline: 2px solid Highlight;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header class="topbar no-print">
+      <div class="brand">
+        <span class="brand-full">Фабрика </span><span class="brand-accent">агентов</span>
+      </div>
+
+      <div class="breadcrumb" id="breadcrumb">Dashboard / Сводка</div>
+
+      <div class="spacer"></div>
+
+      <div class="toolbar">
+        <button class="btn btn-outline btn-sm" id="paletteOpenBtn" title="Command palette">
+          ⌘K <span class="nav-label">Поиск</span>
+        </button>
+
+        <div class="status" id="connectionStatus" data-state="online" title="Статус подключения к AG-UI Gateway">
+          <span class="status-dot"></span>
+          <span id="connectionText">Онлайн</span>
+        </div>
+
+        <button class="btn btn-ghost btn-icon" id="themeBtn" title="Переключить тему">☾</button>
+        <button class="btn btn-ghost btn-icon" id="densityBtn" title="Переключить плотность">▦</button>
+        <button class="btn btn-ghost btn-icon no-print" id="printBtn" title="Печать отчёта">⎙</button>
+
+        <span class="badge badge-user" data-state="gold">operator · fab-accounting</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <nav class="sidebar no-print" aria-label="Основная навигация">
+        <div class="nav-section-title">Рабочее место</div>
+
+        <button class="nav-btn" data-view="dashboard" aria-current="page">
+          <span class="nav-icon">▤</span>
+          <span class="nav-label">Dashboard</span>
+        </button>
+
+        <button class="nav-btn" data-view="catalog">
+          <span class="nav-icon">▥</span>
+          <span class="nav-label">Каталог сценариев</span>
+        </button>
+
+        <button class="nav-btn" data-view="run">
+          <span class="nav-icon">▶</span>
+          <span class="nav-label">Активный ран</span>
+        </button>
+
+        <button class="nav-btn" data-view="history">
+          <span class="nav-icon">≡</span>
+          <span class="nav-label">История ранов</span>
+        </button>
+
+        <div class="nav-section-title">Сервис</div>
+
+        <button class="nav-btn" data-view="states">
+          <span class="nav-icon">◍</span>
+          <span class="nav-label">Состояния</span>
+        </button>
+
+        <button class="nav-btn" data-view="settings">
+          <span class="nav-icon">⚙</span>
+          <span class="nav-label">Настройки</span>
+        </button>
+      </nav>
+
+      <main class="main">
+        <!-- Dashboard -->
+        <section class="view active" id="view-dashboard">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Dashboard</h1>
+              <p class="page-subtitle">Сводка смены: раны, HITL-очередь, здоровье контуров, наблюдаемость.</p>
+            </div>
+            <div class="row">
+              <button class="btn btn-secondary btn-sm" id="simulateConnBtn">Симулировать реконнект</button>
+              <button class="btn btn-primary btn-sm" data-navigate="catalog">Запустить сценарий</button>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <div class="dashboard-card">
+              <div>
+                <div class="dashboard-card-title">Активные раны</div>
+                <div class="dashboard-card-value num">12</div>
+              </div>
+              <div class="dashboard-card-foot">
+                <span class="badge" data-state="running">running</span>
+                <span>из 28 за смену</span>
+              </div>
+            </div>
+
+            <div class="dashboard-card">
+              <div>
+                <div class="dashboard-card-title">Ожидают HITL</div>
+                <div class="dashboard-card-value num">4</div>
+              </div>
+              <div class="dashboard-card-foot">
+                <span class="badge" data-state="waiting-hitl">waiting-hitl</span>
+                <span>макс. ожидание 2ч 14м</span>
+              </div>
+            </div>
+
+            <div class="dashboard-card">
+              <div>
+                <div class="dashboard-card-title">Ошибки за смену</div>
+                <div class="dashboard-card-value num">1</div>
+              </div>
+              <div class="dashboard-card-foot">
+                <span class="badge" data-state="failed">failed</span>
+                <span>GPU timeout</span>
+              </div>
+            </div>
+
+            <div class="dashboard-card">
+              <div>
+                <div class="dashboard-card-title">Health контуров</div>
+                <div class="dashboard-card-value">OK</div>
+              </div>
+              <div class="progress" aria-label="Общее здоровье системы">
+                <div class="progress-bar" style="width: 96%"></div>
+              </div>
+            </div>
+
+            <div class="dashboard-card">
+              <div>
+                <div class="dashboard-card-title">Медиана latency</div>
+                <div class="dashboard-card-value num">2.4s</div>
+              </div>
+              <div class="dashboard-card-foot">
+                <span class="muted">AG-UI first event</span>
+              </div>
+            </div>
+
+            <div class="dashboard-card">
+              <div>
+                <div class="dashboard-card-title">Токены за сутки</div>
+                <div class="dashboard-card-value num">184k</div>
+              </div>
+              <div class="dashboard-card-foot">
+                <a class="trace-link" href="#" onclick="showToast('Langfuse', 'Переход к трейсам в production будет по trace_id.', 'info'); return false;">
+                  ↗ Langfuse
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">Последние раны</h2>
+                  <p class="card-description">Реестр ранов с статусами и точками входа в ленту/HITL.</p>
+                </div>
+                <button class="btn btn-outline btn-sm" data-navigate="history">Вся история</button>
+              </div>
+
+              <div class="table-wrap">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Run ID</th>
+                      <th>Сценарий</th>
+                      <th>Статус</th>
+                      <th>Оператор</th>
+                      <th>Обновлён</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="num">run_8f21</td>
+                      <td>invoice-processing</td>
+                      <td><span class="badge" data-state="waiting-hitl">waiting-hitl</span></td>
+                      <td>А. Шабан</td>
+                      <td class="num">12 мин</td>
+                      <td><button class="btn btn-secondary btn-sm" data-navigate="run">Открыть</button></td>
+                    </tr>
+                    <tr>
+                      <td class="num">run_8f19</td>
+                      <td>report-consolidation</td>
+                      <td><span class="badge" data-state="running">running</span></td>
+                      <td>system</td>
+                      <td class="num">2 мин</td>
+                      <td><button class="btn btn-secondary btn-sm" data-navigate="run">Открыть</button></td>
+                    </tr>
+                    <tr>
+                      <td class="num">run_8f12</td>
+                      <td>contract-review</td>
+                      <td><span class="badge" data-state="done">done</span></td>
+                      <td>А. Шабан</td>
+                      <td class="num">1ч 04м</td>
+                      <td><button class="btn btn-secondary btn-sm" data-navigate="run">Открыть</button></td>
+                    </tr>
+                    <tr>
+                      <td class="num">run_8f09</td>
+                      <td>invoice-processing</td>
+                      <td><span class="badge" data-state="failed">failed</span></td>
+                      <td>event</td>
+                      <td class="num">3ч 18м</td>
+                      <td><button class="btn btn-secondary btn-sm" data-navigate="run">Открыть</button></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="stack">
+              <div class="card">
+                <div class="card-header">
+                  <div>
+                    <h2 class="card-title">HITL-очередь</h2>
+                    <p class="card-description">Требуют решения оператора до применения side effects.</p>
+                  </div>
+                </div>
+
+                <div class="stack">
+                  <div class="task-item" data-navigate="run">
+                    <span class="badge" data-state="waiting-hitl">diff</span>
+                    <div style="min-width:0">
+                      <div style="font-weight:750">Счёт 1048576 · ООО «Ромашка»</div>
+                      <div class="muted small">3 расхождения · ожидает 12 мин</div>
+                    </div>
+                  </div>
+
+                  <div class="task-item">
+                    <span class="badge" data-state="waiting-hitl">gate</span>
+                    <div style="min-width:0">
+                      <div style="font-weight:750">Отчёт Q3 · консолидация</div>
+                      <div class="muted small">1 расхождение · ожидает 48 мин</div>
+                    </div>
+                  </div>
+
+                  <div class="task-item">
+                    <span class="badge" data-state="danger">danger</span>
+                    <div style="min-width:0">
+                      <div style="font-weight:750">Договор 44/2026 · правка суммы</div>
+                      <div class="muted small">требует двойного подтверждения</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-header">
+                  <div>
+                    <h2 class="card-title">Наблюдаемость</h2>
+                    <p class="card-description">Langfuse, SSE, воркеры, GPU endpoints.</p>
+                  </div>
+                </div>
+
+                <dl class="kv">
+                  <dt>Gateway</dt>
+                  <dd><span class="badge" data-state="done">healthy</span></dd>
+
+                  <dt>Worker pool</dt>
+                  <dd><span class="badge" data-state="done">6/6 active</span></dd>
+
+                  <dt>Redis Streams</dt>
+                  <dd><span class="badge" data-state="done">lag 0.8s</span></dd>
+
+                  <dt>GPU / LLM</dt>
+                  <dd><span class="badge" data-state="done">mTLS OK</span></dd>
+
+                  <dt>OCR</dt>
+                  <dd><span class="badge" data-state="warning">queue 2</span></dd>
+
+                  <dt>Langfuse</dt>
+                  <dd><a class="trace-link" href="#" onclick="showToast('Langfuse', 'OTel ingest работает, trace_id доступен из рана.', 'success'); return false;">↗ traces</a></dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Catalog -->
+        <section class="view" id="view-catalog">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Каталог сценариев</h1>
+              <p class="page-subtitle">Видимость ограничена AD-группами. Запуск проверяется на воркере, UI — только UX-фильтр.</p>
+            </div>
+            <div class="row">
+              <input class="input" placeholder="Поиск по сценариям..." style="width: 260px" />
+              <select class="select" style="width: 180px">
+                <option>Все статусы</option>
+                <option>active</option>
+                <option>deprecated</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="catalog-grid">
+            <article class="scenario-card">
+              <div class="scenario-top">
+                <div>
+                  <h2 class="scenario-name">invoice-processing</h2>
+                  <p class="scenario-desc">Обработка входящего счёта: OCR, извлечение, детерминированный расчёт итогов, HITL diff, проводка в АРМ.</p>
+                </div>
+                <span class="badge" data-state="done">active</span>
+              </div>
+
+              <div class="scenario-meta">
+                <span class="badge" data-state="gold">v2.1.0</span>
+                <span class="badge" data-state="muted">fab-accounting</span>
+                <span class="badge" data-state="running">HITL required</span>
+              </div>
+
+              <div class="row small muted">
+                <span>GPU: LLM + OCR</span>
+                <span>Corp: VM4 read + ARM write</span>
+                <span>SLA: 60 min</span>
+              </div>
+
+              <div class="scenario-actions">
+                <button class="btn btn-primary" data-navigate="run">Запустить</button>
+                <button class="btn btn-outline" onclick="showToast('Dry-run', 'Режим dry-run: side effects не применяются, показывается план исполнения.', 'info')">Dry-run</button>
+                <button class="btn btn-ghost" onclick="showToast('Манифест', 'scenarios.json → invoice-processing@2.1.0, digest зафиксирован.', 'info')">Манифест</button>
+              </div>
+            </article>
+
+            <article class="scenario-card">
+              <div class="scenario-top">
+                <div>
+                  <h2 class="scenario-name">report-consolidation</h2>
+                  <p class="scenario-desc">Сборка управленческого отчёта из нескольких источников, нормализация метрик, проверка человеком перед публикацией.</p>
+                </div>
+                <span class="badge" data-state="done">active</span>
+              </div>
+
+              <div class="scenario-meta">
+                <span class="badge" data-state="gold">v1.7.2</span>
+                <span class="badge" data-state="muted">fab-analytics</span>
+                <span class="badge" data-state="waiting-hitl">review</span>
+              </div>
+
+              <div class="row small muted">
+                <span>GPU: LLM</span>
+                <span>Corp: VM4 read</span>
+                <span>Schedule: daily 08:00</span>
+              </div>
+
+              <div class="scenario-actions">
+                <button class="btn btn-primary" data-navigate="run">Запустить</button>
+                <button class="btn btn-outline">История</button>
+              </div>
+            </article>
+
+            <article class="scenario-card" style="opacity:.82">
+              <div class="scenario-top">
+                <div>
+                  <h2 class="scenario-name">contract-review</h2>
+                  <p class="scenario-desc">Первичная проверка договора: извлечение условий, сравнение с шаблоном, список рисков. Устаревает в пользу legal-risk-scoring.</p>
+                </div>
+                <span class="badge" data-state="deprecated">deprecated</span>
+              </div>
+
+              <div class="scenario-meta">
+                <span class="badge" data-state="muted">v0.9.4</span>
+                <span class="badge" data-state="muted">fab-legal</span>
+                <span class="badge" data-state="danger">superseded</span>
+              </div>
+
+              <div class="scenario-actions">
+                <button class="btn btn-secondary" disabled>Запуск запрещён</button>
+                <button class="btn btn-outline">Открыть замену</button>
+              </div>
+            </article>
+
+            <article class="scenario-card">
+              <div class="scenario-top">
+                <div>
+                  <h2 class="scenario-name">document-intake-router</h2>
+                  <p class="scenario-desc">Маршрутизация входящих документов по типу: счёт, акт, договор, служебная записка. Использует классификатор и allowed_set.</p>
+                </div>
+                <span class="badge" data-state="done">active</span>
+              </div>
+
+              <div class="scenario-meta">
+                <span class="badge" data-state="gold">v3.0.1</span>
+                <span class="badge" data-state="muted">fab-docs</span>
+                <span class="badge" data-state="running">router</span>
+              </div>
+
+              <div class="scenario-actions">
+                <button class="btn btn-primary" data-navigate="run">Запустить</button>
+                <button class="btn btn-outline">Эталоны выбора</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Run -->
+        <section class="view" id="view-run">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Ран run_8f21</h1>
+              <p class="page-subtitle">invoice-processing@2.1.0 · digest 7d91... · оператор А. Шабан · thread invoice-1048576</p>
+            </div>
+            <div class="row">
+              <span class="badge" id="runStatusBadge" data-state="waiting-hitl">waiting-hitl</span>
+              <button class="btn btn-outline btn-sm" onclick="showToast('Отмена рана', 'Требуется подтверждение. Side effects не будут применены.', 'warning')">Отменить</button>
+              <button class="btn btn-secondary btn-sm" onclick="showToast('Клонировать ран', 'Новый ран с теми же входами и возможностью изменить параметры.', 'info')">Клонировать</button>
+            </div>
+          </div>
+
+          <div class="banner hidden" id="reconnectBanner" data-tone="warning">
+            <span class="spinner"></span>
+            <div>
+              <strong>Соединение с Gateway потеряно.</strong> Идёт реконнект по Last-Event-ID. События буферизуются в Redis Streams, чекпоинты сохраняются в PostgreSQL.
+            </div>
+          </div>
+
+          <div class="banner hidden" id="offlineAliveBanner" data-tone="info">
+            <div>
+              <strong>Вкладка была закрыта, но ран продолжается на бэкенде.</strong> При возврате UI восстановил ленту из снапшота чекпоинта и живого хвоста без дублей.
+            </div>
+          </div>
+
+          <div class="banner hidden" id="dryRunBanner" data-tone="info">
+            <div>
+              <strong>Dry-run активен.</strong> Граф исполняется без побочных эффектов: корпоративные записи, отправка документов и проведение в АРМ не выполняются.
+            </div>
+          </div>
+
+          <div class="run-layout">
+            <div class="feed">
+              <div class="feed-head">
+                <div class="feed-title">
+                  <strong>Лента выполнения</strong>
+                  <span class="muted small">AG-UI events → UI states</span>
+                </div>
+                <div class="row">
+                  <button class="btn btn-ghost btn-sm" onclick="showToast('Стрим', 'Автопрокрутка включена. В production будет настройка оператора.', 'info')">Автопрокрутка</button>
+                  <button class="btn btn-ghost btn-sm" onclick="showToast('Reasoning', 'Блок размышлений скрыт/показан согласно настройке.', 'info')">Reasoning</button>
+                </div>
+              </div>
+
+              <div class="feed-scroll" id="feedScroll">
+                <div class="msg user">
+                  <div class="msg-meta"><span>Оператор</span><span class="num">10:42:18</span></div>
+                  <div class="msg-bubble markdown-body-clean">
+                    Обработай входящий счёт <strong>1048576</strong> от ООО «Ромашка». Проверь итоги и подготовь к проводке.
+                  </div>
+                </div>
+
+                <div class="msg agent">
+                  <div class="msg-meta"><span>Router</span><span class="badge" data-state="done">STEP_FINISHED</span><span class="num">10:42:19</span></div>
+                  <div class="thought">
+                    Выбран сценарий invoice-processing@2.1.0. Доступ подтверждён группой fab-accounting. Контекст модели собран по allowlist: только разрешённые алгоритмы и инструменты.
+                  </div>
+                </div>
+
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <span>tool: ocr.paddle.batch@1.2.0</span>
+                    <span class="badge" data-state="done">tool-done</span>
+                  </div>
+                  <div class="tool-body">
+pages: 2
+layoutParsingResults: 2
+confidence: 0.981
+artifacts: s3://factory/run_8f21/source.pdf
+trace_id: langfuse://trace/run_8f21_ocr
+                  </div>
+                </div>
+
+                <div class="msg agent">
+                  <div class="msg-meta"><span>Extract LLM</span><span class="badge" data-state="running">streaming</span><span class="num">10:42:31</span></div>
+                  <div class="msg-bubble markdown-body-clean">
+                    Извлёк реквизиты счёта. Ниже — сравнение с источником и детерминированный расчёт итогов.<span class="stream-caret"></span>
+                  </div>
+                </div>
+
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <span>algorithm: finance.invoice.totals@1.3.0</span>
+                    <span class="badge" data-state="done">sandbox · pure</span>
+                  </div>
+                  <div class="tool-body">
+execution: sandbox / runsc / --network none
+input_hash: sha256:3fa4...
+output: {
+  "subtotal": 120000.00,
+  "vat": 20000.00,
+  "total": 140000.00,
+  "currency": "RUB",
+  "rounding": "half-up"
+}
+                  </div>
+                </div>
+
+                <div class="hitl" id="hitlForm" data-state="pending">
+                  <div class="hitl-head">
+                    <div>
+                      <h3 style="margin:0 0 4px">HITL · a2ui/diff</h3>
+                      <div class="muted small">Утверждение требуется перед side-effect нодой arm.create_document@2.0.0.</div>
+                    </div>
+                    <span class="badge" id="hitlBadge" data-state="waiting-hitl">pending</span>
+                  </div>
+
+                  <div class="table-wrap">
+                    <table class="diff-table">
+                      <thead>
+                        <tr>
+                          <th>Поле</th>
+                          <th>Источник</th>
+                          <th>Извлечено агентом</th>
+                          <th>Статус</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>Номер счёта</td>
+                          <td class="num">1048576</td>
+                          <td class="num">1048576</td>
+                          <td><span class="badge" data-state="done">match</span></td>
+                        </tr>
+                        <tr>
+                          <td>Поставщик</td>
+                          <td>ООО «Ромашка»</td>
+                          <td>ООО «Ромашка»</td>
+                          <td><span class="badge" data-state="done">match</span></td>
+                        </tr>
+                        <tr>
+                          <td>Сумма без НДС</td>
+                          <td class="num">120 000,00 ₽</td>
+                          <td class="num diff-add">120 000,00 ₽</td>
+                          <td><span class="badge" data-state="done">calculated</span></td>
+                        </tr>
+                        <tr>
+                          <td>НДС</td>
+                          <td class="num">20 000,00 ₽</td>
+                          <td class="num diff-del">21 600,00 ₽</td>
+                          <td><span class="badge" data-state="danger">mismatch</span></td>
+                        </tr>
+                        <tr>
+                          <td>Итого</td>
+                          <td class="num">140 000,00 ₽</td>
+                          <td class="num diff-add">140 000,00 ₽</td>
+                          <td><span class="badge" data-state="warning">corrected</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <label class="gate" id="gateLabel">
+                    <input type="checkbox" id="gateCheckbox" />
+                    <span>
+                      Подтверждаю, что расхождения проверены. Утверждение создаст ровно один эффект в АРМ благодаря idempotency-key.
+                    </span>
+                  </label>
+
+                  <div class="row" style="justify-content: space-between;">
+                    <div class="row">
+                      <button class="btn btn-primary" id="approveBtn">Утвердить и провести</button>
+                      <button class="btn btn-danger" id="rejectBtn">Отклонить</button>
+                    </div>
+                    <a class="trace-link" href="#" onclick="showToast('Langfuse', 'trace_id: run_8f21 · спаны: router, ocr, extract, totals, hitl.', 'info'); return false;">
+                      ↗ Открыть трейс
+                    </a>
+                  </div>
+
+                  <div class="audit" id="auditLine">
+                    audit: ожидается решение оператора · hitl_node=approve · idempotency_key=9f8c...
+                  </div>
+                </div>
+
+                <div class="msg agent">
+                  <div class="msg-meta"><span>System</span><span class="num">10:43:02</span></div>
+                  <div class="thought">
+                    Следующая нода <span class="mono">post</span> имеет class: side-effect и недоступна без утверждения HITL. После подтверждения воркер выполнит операцию в АРМ по mTLS.
+                  </div>
+                </div>
+              </div>
+
+              <div class="composer no-print">
+                <div class="composer-row">
+                  <textarea class="input" placeholder="Добавьте комментарий к рану или уточнение для оператора..."></textarea>
+                  <button class="btn btn-primary" onclick="showToast('Комментарий', 'Событие добавлено в ленту. В production будет AG-UI message event.', 'success')">Отправить</button>
+                </div>
+
+                <div class="composer-tools">
+                  <label class="switch-line">
+                    <input type="checkbox" id="dryRunToggle" />
+                    <span>Dry-run</span>
+                  </label>
+
+                  <span class="muted">|</span>
+                  <span>Enter — отправить, Shift+Enter — перенос</span>
+
+                  <span class="spacer"></span>
+                  <span class="kbd">Ctrl</span><span class="kbd">K</span>
+                </div>
+              </div>
+            </div>
+
+            <aside class="side-stack">
+              <div class="card">
+                <div class="card-header">
+                  <div>
+                    <h2 class="card-title">Шаги графа</h2>
+                    <p class="card-description">Манифест ⇄ LangGraph ⇄ AG-UI events.</p>
+                  </div>
+                </div>
+
+                <div class="steps">
+                  <div class="step" data-state="done">
+                    <span class="dot"></span>
+                    <span>router</span>
+                    <span class="badge" data-state="done">done</span>
+                  </div>
+                  <div class="step" data-state="done">
+                    <span class="dot"></span>
+                    <span>ocr</span>
+                    <span class="badge" data-state="done">done</span>
+                  </div>
+                  <div class="step" data-state="done">
+                    <span class="dot"></span>
+                    <span>extract</span>
+                    <span class="badge" data-state="done">done</span>
+                  </div>
+                  <div class="step" data-state="done">
+                    <span class="dot"></span>
+                    <span>totals</span>
+                    <span class="badge" data-state="done">sandbox</span>
+                  </div>
+                  <div class="step" data-state="waiting">
+                    <span class="dot"></span>
+                    <span>approve</span>
+                    <span class="badge" data-state="waiting-hitl">HITL</span>
+                  </div>
+                  <div class="step" data-state="future">
+                    <span class="dot"></span>
+                    <span>post</span>
+                    <span class="badge" data-state="muted">side-effect</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-header">
+                  <div>
+                    <h2 class="card-title">Контекст рана</h2>
+                    <p class="card-description">Аудит, версии, доступы, идемпотентность.</p>
+                  </div>
+                </div>
+
+                <dl class="kv">
+                  <dt>Scenario</dt>
+                  <dd class="mono">invoice-processing@2.1.0</dd>
+
+                  <dt>Digest</dt>
+                  <dd class="mono num">sha256:7d91c4...</dd>
+
+                  <dt>Thread</dt>
+                  <dd class="mono">invoice-1048576</dd>
+
+                  <dt>Principal</dt>
+                  <dd>А. Шабан · fab-accounting</dd>
+
+                  <dt>Access</dt>
+                  <dd><span class="badge" data-state="done">allow</span></dd>
+
+                  <dt>Idempotency</dt>
+                  <dd class="mono num">9f8c21ae...</dd>
+
+                  <dt>Checkpoint</dt>
+                  <dd><span class="badge" data-state="done">PG saved</span></dd>
+
+                  <dt>Stream buffer</dt>
+                  <dd><span class="badge" data-state="done">Redis XADD ok</span></dd>
+                </dl>
+              </div>
+
+              <div class="card">
+                <div class="card-header">
+                  <div>
+                    <h2 class="card-title">Источники и артефакты</h2>
+                    <p class="card-description">Файлы, корп. данные, следы доступа.</p>
+                  </div>
+                </div>
+
+                <div class="stack">
+                  <div class="row" style="justify-content: space-between;">
+                    <span class="mono small">source.pdf</span>
+                    <span class="badge" data-state="muted">S3</span>
+                  </div>
+                  <div class="row" style="justify-content: space-between;">
+                    <span class="mono small">extract.json</span>
+                    <span class="badge" data-state="done">validated</span>
+                  </div>
+                  <div class="row" style="justify-content: space-between;">
+                    <span class="mono small">totals.out.json</span>
+                    <span class="badge" data-state="done">schema ok</span>
+                  </div>
+                  <div class="row" style="justify-content: space-between;">
+                    <span class="mono small">VM4 master data</span>
+                    <span class="badge" data-state="gold">mTLS read</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- History -->
+        <section class="view" id="view-history">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">История ранов</h1>
+              <p class="page-subtitle">Реестр в PostgreSQL ВМ №2. Фильтрация, экспорт, возврат к паузам и трейсам.</p>
+            </div>
+            <div class="row">
+              <button class="btn btn-outline btn-sm" onclick="showToast('Экспорт', 'CSV/JSON экспорт будет формироваться на бэкенде с правами пользователя.', 'info')">Экспорт CSV</button>
+              <button class="btn btn-secondary btn-sm" onclick="showToast('Фильтр', 'Сохранённое представление: «Мои HITL за смену».', 'success')">Сохранить фильтр</button>
+            </div>
+          </div>
+
+          <div class="filters">
+            <input class="input" placeholder="Поиск по run_id, thread, сценарию" style="flex:1; min-width: 240px" />
+            <select class="select" style="width: 180px">
+              <option>Все статусы</option>
+              <option>waiting-hitl</option>
+              <option>done</option>
+              <option>failed</option>
+              <option>cancelled</option>
+            </select>
+            <select class="select" style="width: 180px">
+              <option>За сегодня</option>
+              <option>За смену</option>
+              <option>За 7 дней</option>
+            </select>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Сценарий</th>
+                  <th>Версия</th>
+                  <th>Статус</th>
+                  <th>Оператор</th>
+                  <th>Длительность</th>
+                  <th>Трейс</th>
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="num">run_8f21</td>
+                  <td>invoice-processing</td>
+                  <td class="num">2.1.0</td>
+                  <td><span class="badge" data-state="waiting-hitl">waiting-hitl</span></td>
+                  <td>А. Шабан</td>
+                  <td class="num">00:12:44</td>
+                  <td><a class="trace-link" href="#">↗</a></td>
+                  <td><button class="btn btn-secondary btn-sm" data-navigate="run">Открыть</button></td>
+                </tr>
+                <tr>
+                  <td class="num">run_8f19</td>
+                  <td>report-consolidation</td>
+                  <td class="num">1.7.2</td>
+                  <td><span class="badge" data-state="running">running</span></td>
+                  <td>schedule</td>
+                  <td class="num">00:02:10</td>
+                  <td><a class="trace-link" href="#">↗</a></td>
+                  <td><button class="btn btn-secondary btn-sm" data-navigate="run">Открыть</button></td>
+                </tr>
+                <tr>
+                  <td class="num">run_8f18</td>
+                  <td>document-intake-router</td>
+                  <td class="num">3.0.1</td>
+                  <td><span class="badge" data-state="offline-alive">offline-alive</span></td>
+                  <td>event</td>
+                  <td class="num">00:08:02</td>
+                  <td><a class="trace-link" href="#">↗</a></td>
+                  <td><button class="btn btn-secondary btn-sm" data-navigate="run">Вернуться</button></td>
+                </tr>
+                <tr>
+                  <td class="num">run_8f12</td>
+                  <td>contract-review</td>
+                  <td class="num">0.9.4</td>
+                  <td><span class="badge" data-state="done">done</span></td>
+                  <td>А. Шабан</td>
+                  <td class="num">01:04:18</td>
+                  <td><a class="trace-link" href="#">↗</a></td>
+                  <td><button class="btn btn-outline btn-sm">Отчёт</button></td>
+                </tr>
+                <tr>
+                  <td class="num">run_8f09</td>
+                  <td>invoice-processing</td>
+                  <td class="num">2.1.0</td>
+                  <td><span class="badge" data-state="failed">failed</span></td>
+                  <td>event</td>
+                  <td class="num">00:01:39</td>
+                  <td><a class="trace-link" href="#">↗</a></td>
+                  <td><button class="btn btn-danger btn-sm">Повторить</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- States -->
+        <section class="view" id="view-states">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Состояния интерфейса</h1>
+              <p class="page-subtitle">Первоклассные объекты панели: оператор всегда понимает, что происходит с соединением, раном, формой и данными.</p>
+            </div>
+            <div class="row">
+              <button class="btn btn-outline btn-sm" onclick="showToast('Toast demo', 'Уведомление появилось в правом нижнем углу.', 'info')">Показать toast</button>
+              <button class="btn btn-outline btn-sm" onclick="openDialog('Деструктивное действие', 'Отмена рана остановит граф. Уже применённые side effects не откатываются автоматически.', 'danger')">Открыть dialog</button>
+            </div>
+          </div>
+
+          <div class="state-gallery">
+            <div class="card">
+              <h2 class="card-title">Reconnecting</h2>
+              <p class="card-description">SSE потерян, идёт восстановление по Last-Event-ID.</p>
+              <div class="banner" data-tone="warning">
+                <span class="spinner"></span>
+                <div><strong>Реконнект.</strong> Буферизуем события, не теряем HITL-контекст.</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Offline-alive</h2>
+              <p class="card-description">Вкладка была неактивна, ран живёт на бэкенде.</p>
+              <div class="banner" data-tone="info">
+                <div><strong>Ран продолжался без вкладки.</strong> Восстановлено из чекпоинта и Streams.</div>
+              </div>
+              <div class="row" style="margin-top: var(--space-3)">
+                <span class="badge" data-state="offline-alive">offline-alive</span>
+                <span class="badge" data-state="done">checkpoint restored</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Empty state</h2>
+              <p class="card-description">Нет доступных сценариев или история пуста.</p>
+              <div class="empty-state">
+                <div class="empty-state-icon">∅</div>
+                <div class="empty-state-title">Сценарии не найдены</div>
+                <div class="empty-state-description">
+                  У вашего профиля нет AD-групп для отображения каталога. Обратитесь к администратору Keycloak/LDAP.
+                </div>
+                <button class="btn btn-outline btn-sm" onclick="showToast('Доступ', 'Администрирование доступов только в AD/Keycloak.', 'warning')">Скопировать request</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Error boundary</h2>
+              <p class="card-description">Локальный сбой UI без потери бэкенд-рана.</p>
+              <div class="error-boundary">
+                <div class="error-boundary-title">Не удалось отрисовать компонент HITL</div>
+                <div class="error-boundary-message">
+                  Ран продолжает исполняться. Отправьте diagnostic snapshot в Sentry и попробуйте восстановить ленту.
+                </div>
+                <div class="row">
+                  <button class="btn btn-primary btn-sm" onclick="showToast('Sentry', 'Diagnostic snapshot отправлен: run_id, trace_id, last AG-UI event.', 'success')">Отправить diagnostic</button>
+                  <button class="btn btn-outline btn-sm">Перезагрузить панель</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Loading / skeleton</h2>
+              <p class="card-description">Первичная загрузка каталога или истории.</p>
+              <div class="stack">
+                <div class="skeleton" style="width: 70%"></div>
+                <div class="skeleton" style="width: 100%"></div>
+                <div class="skeleton" style="width: 92%"></div>
+                <div class="skeleton" style="width: 64%"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">HITL danger</h2>
+              <p class="card-description">Форма содержит критичные расхождения или destructive hint.</p>
+              <div class="banner" data-tone="danger">
+                <div><strong>Внимание:</strong> операция изменяет документ в АРМ. Требуется явное подтверждение и idempotency-key.</div>
+              </div>
+              <div class="row" style="margin-top: var(--space-3)">
+                <span class="badge" data-state="danger">destructiveHint</span>
+                <span class="badge" data-state="gold">idempotentHint</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Dry-run</h2>
+              <p class="card-description">План исполнения без побочных эффектов.</p>
+              <div class="banner" data-tone="info">
+                <div><strong>Dry-run:</strong> ocr → extract → totals → hitl. Нода post будет пропущена.</div>
+              </div>
+              <div class="progress" style="margin-top: var(--space-3)">
+                <div class="progress-bar" style="width: 78%"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Deprecated scenario</h2>
+              <p class="card-description">Сценарий помечен lifecycle: deprecated, запуск ограничен.</p>
+              <div class="row">
+                <span class="badge" data-state="deprecated">deprecated</span>
+                <span class="badge" data-state="muted">supersedes: legal-risk-scoring@1.0.0</span>
+              </div>
+              <p class="card-description" style="margin-top: var(--space-3)">
+                Отображается в истории, но не доступен для новых запусков без явного административного решения.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Settings -->
+        <section class="view" id="view-settings">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Настройки оператора</h1>
+              <p class="page-subtitle">Тема, плотность, отображение reasoning, автопрокрутка, локаль. Без влияния на безопасность и доступы.</p>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <h2 class="card-title">Внешний вид</h2>
+              <div class="stack" style="margin-top: var(--space-3)">
+                <label class="field">
+                  <span class="label">Тема</span>
+                  <select class="select" id="themeSelect">
+                    <option value="light">Светлая</option>
+                    <option value="dark">Тёмная</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span class="label">Плотность</span>
+                  <select class="select" id="densitySelect">
+                    <option value="comfort">Comfort</option>
+                    <option value="compact">Compact</option>
+                  </select>
+                </label>
+
+                <label class="switch-line">
+                  <input type="checkbox" checked />
+                  <span>Показывать reasoning по умолчанию</span>
+                </label>
+
+                <label class="switch-line">
+                  <input type="checkbox" checked />
+                  <span>Автопрокрутка ленты при стриминге</span>
+                </label>
+
+                <label class="switch-line">
+                  <input type="checkbox" />
+                  <span>Уменьшить движение</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Данные и локаль</h2>
+              <div class="stack" style="margin-top: var(--space-3)">
+                <label class="field">
+                  <span class="label">Язык интерфейса</span>
+                  <select class="select">
+                    <option>Русский (ru-RU)</option>
+                    <option>English (en-US)</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span class="label">Формат чисел</span>
+                  <select class="select">
+                    <option>120 000,00 ₽</option>
+                    <option>120000.00 RUB</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span class="label">Часовой пояс</span>
+                  <select class="select">
+                    <option>Europe/Moscow</option>
+                    <option>UTC</option>
+                  </select>
+                </label>
+
+                <div class="banner" data-tone="info">
+                  <div>
+                    Локаль UI согласуется с <span class="mono">io.locale</span> манифестов. Финансовые значения всегда показываются с единицами и точностью из контракта алгоритма.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <div class="dialog-backdrop hidden" id="dialogBackdrop">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+      <h2 class="dialog-title" id="dialogTitle">Подтверждение</h2>
+      <p class="dialog-description" id="dialogDescription">Это действие может привести к побочному эффекту.</p>
+      <div class="dialog-actions">
+        <button class="btn btn-outline" id="dialogCancel">Отмена</button>
+        <button class="btn btn-primary" id="dialogConfirm">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="command-palette-backdrop hidden" id="paletteBackdrop"></div>
+  <div class="command-palette hidden" id="commandPalette" role="dialog" aria-modal="true" aria-label="Command palette">
+    <input class="command-input" id="commandInput" placeholder="Поиск: сценарий, ран, экран, действие..." autocomplete="off" />
+    <div class="command-list" id="commandList"></div>
+  </div>
+
+  <script>
+    const root = document.documentElement;
+    const views = Array.from(document.querySelectorAll('.view'));
+    const navButtons = Array.from(document.querySelectorAll('.nav-btn[data-view]'));
+    const breadcrumb = document.getElementById('breadcrumb');
+
+    const viewTitles = {
+      dashboard: 'Dashboard / Сводка',
+      catalog: 'Каталог / Сценарии',
+      run: 'Ран / invoice-processing',
+      history: 'Реестр / История ранов',
+      states: 'Сервис / Состояния',
+      settings: 'Сервис / Настройки'
+    };
+
+    function setView(viewName) {
+      views.forEach(view => view.classList.remove('active'));
+      navButtons.forEach(btn => btn.removeAttribute('aria-current'));
+
+      const view = document.getElementById(`view-${viewName}`);
+      const btn = document.querySelector(`.nav-btn[data-view="${viewName}"]`);
+
+      if (view) view.classList.add('active');
+      if (btn) btn.setAttribute('aria-current', 'page');
+      if (breadcrumb) breadcrumb.textContent = viewTitles[viewName] || viewName;
+    }
+
+    navButtons.forEach(btn => {
+      btn.addEventListener('click', () => setView(btn.dataset.view));
+    });
+
+    document.querySelectorAll('[data-navigate]').forEach(el => {
+      el.addEventListener('click', () => setView(el.dataset.navigate));
+    });
+
+    // Theme
+    const themeBtn = document.getElementById('themeBtn');
+    const themeSelect = document.getElementById('themeSelect');
+
+    function applyTheme(theme) {
+      root.dataset.theme = theme;
+      root.classList.toggle('dark', theme === 'dark');
+      if (themeBtn) themeBtn.textContent = theme === 'dark' ? '☀' : '☾';
+      if (themeSelect) themeSelect.value = theme;
+    }
+
+    themeBtn?.addEventListener('click', () => {
+      applyTheme(root.dataset.theme === 'dark' ? 'light' : 'dark');
+    });
+
+    themeSelect?.addEventListener('change', e => applyTheme(e.target.value));
+
+    // Density
+    const densityBtn = document.getElementById('densityBtn');
+    const densitySelect = document.getElementById('densitySelect');
+
+    function applyDensity(density) {
+      root.dataset.density = density;
+      if (densitySelect) densitySelect.value = density;
+    }
+
+    densityBtn?.addEventListener('click', () => {
+      applyDensity(root.dataset.density === 'compact' ? 'comfort' : 'compact');
+    });
+
+    densitySelect?.addEventListener('change', e => applyDensity(e.target.value));
+
+    // Print
+    document.getElementById('printBtn')?.addEventListener('click', () => window.print());
+
+    // Toasts
+    function showToast(title, message, tone = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.dataset.tone = tone;
+      toast.innerHTML = `
+        <div style="min-width:0">
+          <div class="toast-title">${title}</div>
+          <div class="toast-message">${message}</div>
+        </div>
+      `;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(24px)';
+        toast.style.transition = 'all 220ms ease';
+        setTimeout(() => toast.remove(), 240);
+      }, 4200);
+    }
+
+    // Dialog
+    const dialogBackdrop = document.getElementById('dialogBackdrop');
+    const dialogTitle = document.getElementById('dialogTitle');
+    const dialogDescription = document.getElementById('dialogDescription');
+    const dialogConfirm = document.getElementById('dialogConfirm');
+    const dialogCancel = document.getElementById('dialogCancel');
+    let dialogAction = null;
+
+    function openDialog(title, description, tone = 'primary', action = null) {
+      dialogTitle.textContent = title;
+      dialogDescription.textContent = description;
+      dialogConfirm.className = tone === 'danger' ? 'btn btn-danger' : 'btn btn-primary';
+      dialogAction = action;
+      dialogBackdrop.classList.remove('hidden');
+      dialogConfirm.focus();
+    }
+
+    function closeDialog() {
+      dialogBackdrop.classList.add('hidden');
+      dialogAction = null;
+    }
+
+    dialogCancel?.addEventListener('click', closeDialog);
+
+    dialogBackdrop?.addEventListener('click', e => {
+      if (e.target === dialogBackdrop) closeDialog();
+    });
+
+    dialogConfirm?.addEventListener('click', () => {
+      if (typeof dialogAction === 'function') dialogAction();
+      closeDialog();
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        closeDialog();
+        closePalette();
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        openPalette();
+      }
+    });
+
+    // Connection simulation
+    const connectionStatus = document.getElementById('connectionStatus');
+    const connectionText = document.getElementById('connectionText');
+    const reconnectBanner = document.getElementById('reconnectBanner');
+    const offlineAliveBanner = document.getElementById('offlineAliveBanner');
+    const runStatusBadge = document.getElementById('runStatusBadge');
+
+    let connectionMode = 0;
+
+    function setConnectionState(state) {
+      connectionMode = state;
+      connectionStatus.dataset.state = state;
+
+      reconnectBanner?.classList.add('hidden');
+      offlineAliveBanner?.classList.add('hidden');
+
+      if (state === 'online') {
+        connectionText.textContent = 'Онлайн';
+        showToast('Gateway', 'SSE соединение восстановлено. Live tail доступен.', 'success');
+      }
+
+      if (state === 'reconnecting') {
+        connectionText.textContent = 'Реконнект';
+        reconnectBanner?.classList.remove('hidden');
+        setView('run');
+        showToast('AG-UI Gateway', 'Потеря SSE. Идёт реконнект по Last-Event-ID.', 'warning');
+      }
+
+      if (state === 'offline-alive') {
+        connectionText.textContent = 'Offline-alive';
+        offlineAliveBanner?.classList.remove('hidden');
+        runStatusBadge?.setAttribute('data-state', 'offline-alive');
+        setView('run');
+        showToast('Ран', 'Вкладка была неактивна. Состояние восстановлено из чекпоинта.', 'info');
+      }
+    }
+
+    document.getElementById('simulateConnBtn')?.addEventListener('click', () => {
+      const next = (connectionMode + 1) % 3;
+      setConnectionState(['online', 'reconnecting', 'offline-alive'][next]);
+    });
+
+    // Dry-run
+    const dryRunToggle = document.getElementById('dryRunToggle');
+    const dryRunBanner = document.getElementById('dryRunBanner');
+
+    dryRunToggle?.addEventListener('change', () => {
+      dryRunBanner?.classList.toggle('hidden', !dryRunToggle.checked);
+      showToast(
+        'Dry-run',
+        dryRunToggle.checked
+          ? 'Режимdry-run включён: side-effect ноды будут пропущены.'
+          : 'Режим dry-run выключен.',
+        dryRunToggle.checked ? 'info' : 'success'
+      );
+    });
+
+    // HITL approve/reject
+    const hitlForm = document.getElementById('hitlForm');
+    const hitlBadge = document.getElementById('hitlBadge');
+    const approveBtn = document.getElementById('approveBtn');
+    const rejectBtn = document.getElementById('rejectBtn');
+    const gateCheckbox = document.getElementById('gateCheckbox');
+    const gateLabel = document.getElementById('gateLabel');
+    const auditLine = document.getElementById('auditLine');
+
+    function lockHitl() {
+      hitlForm.dataset.state = 'locked';
+      hitlBadge.dataset.state = 'locked';
+      hitlBadge.textContent = 'locked';
+      approveBtn.disabled = true;
+      rejectBtn.disabled = true;
+      gateCheckbox.disabled = true;
+      auditLine.textContent = 'audit: утверждение отправлено · idempotency_key=9f8c... · ожидание подтверждения воркера';
+    }
+
+    function resolveHitl(approved) {
+      hitlForm.dataset.state = approved ? 'approved' : 'rejected';
+      hitlBadge.dataset.state = approved ? 'approved' : 'rejected';
+      hitlBadge.textContent = approved ? 'approved' : 'rejected';
+      runStatusBadge.dataset.state = approved ? 'running' : 'cancelled';
+      runStatusBadge.textContent = approved ? 'running' : 'cancelled';
+
+      auditLine.textContent = approved
+        ? 'audit: А. Шабан · 10:44:02 · approved · effect=arm.create_document · idempotency_key=9f8c...'
+        : 'audit: А. Шабан · 10:44:02 · rejected · effect=notify.operator · idempotency_key=9f8c...';
+
+      showToast(
+        approved ? 'HITL утверждено' : 'HITL отклонено',
+        approved
+          ? 'Ровно один эффект будет применён. Повторное утверждение визуально и функционально заблокировано.'
+          : 'Side-effect не выполнен. Оператор уведомлён, ран переведён в отменённое состояние.',
+        approved ? 'success' : 'warning'
+      );
+    }
+
+    approveBtn?.addEventListener('click', () => {
+      if (!gateCheckbox.checked) {
+        gateLabel.classList.add('error');
+        setTimeout(() => gateLabel.classList.remove('error'), 450);
+        showToast('Подтверждение', 'Отметьте gate перед утверждением HITL.', 'danger');
+        return;
+      }
+
+      openDialog(
+        'Утвердить HITL?',
+        'Будет выполнена бизнес-операция в АРМ. Idempotency-key гарантирует ровно один эффект.',
+        'primary',
+        () => {
+          lockHitl();
+          setTimeout(() => resolveHitl(true), 700);
+        }
+      );
+    });
+
+    rejectBtn?.addEventListener('click', () => {
+      openDialog(
+        'Отклонить HITL?',
+        'Side-effect не будет выполнен. Граф пойдёт в ветку reject.',
+        'danger',
+        () => {
+          lockHitl();
+          setTimeout(() => resolveHitl(false), 700);
+        }
+      );
+    });
+
+    // Command palette
+    const palette = document.getElementById('commandPalette');
+    const paletteBackdrop = document.getElementById('paletteBackdrop');
+    const paletteOpenBtn = document.getElementById('paletteOpenBtn');
+    const commandInput = document.getElementById('commandInput');
+    const commandList = document.getElementById('commandList');
+
+    const paletteItems = [
+      { title: 'Dashboard', desc: 'Сводка смены и здоровье контуров', action: () => setView('dashboard') },
+      { title: 'Каталог сценариев', desc: 'invoice-processing, report-consolidation, router', action: () => setView('catalog') },
+      { title: 'Активный ран run_8f21', desc: 'waiting-hitl · invoice-processing@2.1.0', action: () => setView('run') },
+      { title: 'История ранов', desc: 'Реестр, фильтры, экспорт, трейсы', action: () => setView('history') },
+      { title: 'Состояния UI', desc: 'reconnecting, offline-alive, empty, error, dry-run', action: () => setView('states') },
+      { title: 'Настройки', desc: 'Тема, плотность, локаль, reasoning', action: () => setView('settings') },
+      { title: 'Запустить dry-run', desc: 'Без побочных эффектов', action: () => { setView('run'); dryRunToggle.checked = true; dryRunToggle.dispatchEvent(new Event('change')); } },
+      { title: 'Симулировать реконнект', desc: 'Last-Event-ID + snapshot', action: () => setConnectionState('reconnecting') },
+      { title: 'Открыть Langfuse', desc: 'trace_id из рана', action: () => showToast('Langfuse', 'В production ссылка будет формироваться по trace_id рана.', 'info') }
+    ];
+
+    function renderPalette(query = '') {
+      const q = query.trim().toLowerCase();
+      const filtered = paletteItems.filter(item =>
+        !q || item.title.toLowerCase().includes(q) || item.desc.toLowerCase().includes(q)
+      );
+
+      commandList.innerHTML = '';
+
+      filtered.forEach((item, index) => {
+        const btn = document.createElement('button');
+        btn.className = 'command-item';
+        if (index === 0) btn.setAttribute('aria-selected', 'true');
+        btn.innerHTML = `
+          <div class="command-item-main">
+            <div class="command-item-title">${item.title}</div>
+            <div class="command-item-desc">${item.desc}</div>
+          </div>
+          <span class="kbd">↵</span>
+        `;
+        btn.addEventListener('click', () => {
+          item.action();
+          closePalette();
+        });
+        commandList.appendChild(btn);
+      });
+
+      if (!filtered.length) {
+        commandList.innerHTML = '<div class="empty-state" style="min-height:120px;padding:24px"><div class="empty-state-title">Ничего не найдено</div><div class="empty-state-description">Попробуйте другой запрос или откройте каталог.</div></div>';
+      }
+    }
+
+    function openPalette() {
+      palette.classList.remove('hidden');
+      paletteBackdrop.classList.remove('hidden');
+      commandInput.value = '';
+      renderPalette();
+      commandInput.focus();
+    }
+
+    function closePalette() {
+      palette.classList.add('hidden');
+      paletteBackdrop.classList.add('hidden');
+    }
+
+    paletteOpenBtn?.addEventListener('click', openPalette);
+    paletteBackdrop?.addEventListener('click', closePalette);
+
+    commandInput?.addEventListener('input', e => renderPalette(e.target.value));
+
+    commandInput?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const first = commandList.querySelector('.command-item');
+        first?.click();
+      }
+    });
+
+    // Initial demo polish
+    applyTheme('light');
+    applyDensity('comfort');
+    renderPalette();
+
+    setTimeout(() => {
+      showToast('Preview загружен', 'Это автономное UX-превью. Финальные компоненты будут собраны на shadcn/ui + assistant-ui + AG-UI.', 'info');
+    }, 450);
+  </script>
+</body>
+</html>
