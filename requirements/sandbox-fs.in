@@ -1,0 +1,12 @@
+# requirements/sandbox-fs.in — файловая структура, архивы, блокировки
+fsspec
+pathspec
+filelock
+portalocker
+send2trash
+py7zr
+zstandard
+brotli
+watchdog
+rarfile
+universal_pathlib

@@ -1,0 +1,6 @@
+# requirements/sandbox-ocr.in — сканы и распознавание
+pytesseract
+pdf2image
+opencv-python-headless
+exifread
+ocrmypdf

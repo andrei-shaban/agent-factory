@@ -1,0 +1,12 @@
+# requirements/sandbox-convert.in — конвертация форматов
+pdf2docx
+weasyprint
+pillow-heif
+pillow-avif-plugin
+pikepdf
+markdown
+mistune
+html2text
+markdownify
+psd-tools
+ebooklib

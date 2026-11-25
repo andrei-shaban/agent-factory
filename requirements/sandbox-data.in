@@ -1,0 +1,11 @@
+# requirements/sandbox-data.in — массивы, табличные данные, кодировки
+numpy
+pandas
+pyarrow
+duckdb
+charset-normalizer
+tabulate
+lxml
+polars
+scipy
+scikit-learn

@@ -1,0 +1,11 @@
+# requirements/sandbox-viz.in — графики и схемы
+matplotlib
+Pillow
+graphviz
+diagrams
+vsdx
+cairosvg
+mermaid-py
+plotly
+seaborn
+schemdraw

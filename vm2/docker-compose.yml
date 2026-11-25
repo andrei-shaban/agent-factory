@@ -66,8 +66,8 @@ services:
       SEAWEED_S3_SECRET_KEY: ${S3_SECRET_KEY}
       SEAWEED_S3_BUCKET_FACTORY: ${SEAWEED_S3_BUCKET_FACTORY:-factory-artifacts}
       SEAWEED_S3_BUCKET_BACKUPS: ${SEAWEED_S3_BUCKET_BACKUPS:-postgres-backups}
-      # Управление песочницами через socket proxy (прямой docker.sock не монтируется)
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # Sandbox control is disabled in the normal worker profile; opt in only with its rootless daemon endpoint.
+      DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://sandbox-disabled:2375}
       SANDBOX_RUNTIME: runsc
       SANDBOX_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2.0}
       SANDBOX_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
@@ -277,6 +277,7 @@ services:
     restart: unless-stopped
     command:
       - master
+      - -peers=none
       - -ip=seaweedfs-master
       - -port=9333
       - -mdir=/data/master
@@ -452,9 +453,9 @@ services:
       SYSTEM: "0"
       DISTRIBUTION: "0"
       EVENTS: "0"
-      PING: "1"
+      PING: "0"
     volumes:
-      - ${SANDBOX_DOCKER_SOCKET}:/var/run/docker.sock:ro
+      - ${SANDBOX_DOCKER_SOCKET:-/run/user/1000/docker.sock}:/var/run/docker.sock:ro
     networks:
       - internal
     security_opt:

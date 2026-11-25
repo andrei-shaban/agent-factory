@@ -1,0 +1,17 @@
+# requirements/sandbox-docs.in — Office/PDF: чтение, генерация, →markdown
+openpyxl
+xlsxwriter
+python-calamine
+xlrd
+python-docx
+docxtpl
+mammoth
+docx2txt
+python-pptx
+pypdf
+pdfplumber
+pymupdf
+reportlab
+olefile
+markitdown[docx,xlsx,pptx,pdf,outlook]
+extract-msg

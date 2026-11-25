@@ -1,0 +1,4 @@
+# requirements/build.in — служебное, обязательно для build-isolation в ране
+pip
+setuptools
+wheel

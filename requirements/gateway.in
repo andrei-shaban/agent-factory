@@ -1,0 +1,9 @@
+# requirements/gateway.in — ВМ №1, AG-UI Gateway (код vm1/gateway/app)
+fastapi
+uvicorn[standard]
+ag-ui-langgraph
+ag-ui-protocol
+langfuse
+redis
+psycopg[binary]
+httpx

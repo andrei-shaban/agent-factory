@@ -1,0 +1,16 @@
+# requirements/sandbox-core.in — ядро агента внутри рана
+langgraph
+langfuse
+httpx
+pydantic
+tenacity
+python-dateutil
+dateparser
+jinja2
+regex
+ftfy
+unidecode
+python-slugify
+xxhash
+filetype
+puremagic

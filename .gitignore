@@ -5,3 +5,6 @@
 /vm1/rendered/
 vm1/data/
 vm1/logs/
+wheelhouse/
+wheelhouse.sha256
+vm1/pypiserver/packages/

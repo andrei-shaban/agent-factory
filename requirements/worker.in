@@ -1,0 +1,10 @@
+# requirements/worker.in — ВМ №2, воркер TaskIQ
+taskiq
+taskiq-redis
+langgraph
+langfuse
+ag-ui-protocol
+redis
+psycopg[binary]
+httpx
+tenacity

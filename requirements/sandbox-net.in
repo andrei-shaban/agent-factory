@@ -1,0 +1,19 @@
+# requirements/sandbox-net.in — HTTP, парсинг страниц, файловые протоколы
+requests
+requests-toolbelt
+urllib3
+beautifulsoup4
+selectolax
+trafilatura
+w3lib
+smbprotocol
+paramiko
+scp
+webdavclient3
+websockets
+aiofiles
+certifi
+cryptography
+hishel
+dnspython
+ftputil
