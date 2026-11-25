@@ -23,6 +23,7 @@
         {
           "name": "langfuse-events",
           "actions": [
+            "Admin",
             "Read",
             "Write",
             "List",
@@ -32,6 +33,7 @@
         {
           "name": "factory-artifacts",
           "actions": [
+            "Admin",
             "Read",
             "Write",
             "List",
@@ -42,6 +44,7 @@
         {
           "name": "postgres-backups",
           "actions": [
+            "Admin",
             "Read",
             "Write",
             "List",

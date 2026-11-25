@@ -149,7 +149,7 @@ services:
     entrypoint:
       - bash
       - -ec
-      - install -o postgres -g postgres -m 0600 /etc/certs/pg-server.key /tmp/pg-server.key; exec docker-entrypoint.sh "$@"
+      - install -o postgres -g postgres -m 0600 /etc/certs/pg-server.key /tmp/pg-server.key; install -d -o postgres -g postgres -m 0700 /var/lib/postgresql/wal-archive; exec docker-entrypoint.sh "$@"
       - --
     command:
       - postgres
