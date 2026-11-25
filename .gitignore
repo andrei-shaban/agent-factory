@@ -3,5 +3,5 @@
 /certs/
 /vm2/certs/
 /vm1/rendered/
-vm1/data
-vm1/logs
+vm1/data/
+vm1/logs/
