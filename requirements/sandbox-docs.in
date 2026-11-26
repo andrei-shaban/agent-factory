@@ -13,4 +13,3 @@ pymupdf
 reportlab
 olefile
 markitdown[docx,xlsx,pptx,pdf,outlook]
-extract-msg

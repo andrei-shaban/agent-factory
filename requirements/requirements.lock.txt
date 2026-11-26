@@ -295,7 +295,6 @@ beautifulsoup4==4.15.0 \
     --hash=sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9
     # via
     #   -r requirements/sandbox-net.in
-    #   extract-msg
     #   markdownify
     #   markitdown
 brotli==1.2.1 \
@@ -770,14 +769,6 @@ cobble==0.1.4 \
     --hash=sha256:36c91b1655e599fd428e2b95fdd5f0da1ca2e9f1abb0bc871dec21a0e78a2b44 \
     --hash=sha256:de38be1539992c8a06e569630717c485a5f91be2192c461ea2b220607dfa78aa
     # via mammoth
-colorclass==2.2.2 \
-    --hash=sha256:6d4fe287766166a98ca7bc6f6312daf04a0481b1eda43e7173484051c0ab4366 \
-    --hash=sha256:6f10c273a0ef7a1150b1120b6095cbdd68e5cf36dfd5d0fc957a2500bbf99a55
-    # via oletools
-compressed-rtf==1.0.7 \
-    --hash=sha256:7c30859334839f3cdc7d10796af5b434bb326b9df7cb5a65e95a8eacb2951b0e \
-    --hash=sha256:b7904921d78c67a0a4b7fff9fb361a00ae2b447b6edca010ce321cd98fa0fcc0
-    # via extract-msg
 contourpy==1.4.0 \
     --hash=sha256:018227e134b73090b06f911e773a526c77c9af426be29065500ce096a5accd4c \
     --hash=sha256:072a702e2e178f4fcf96f04775d0c059e4c917925abf0d3208ebb6865df3c23d \
@@ -916,7 +907,6 @@ cryptography==50.0.2 \
     --hash=sha256:fdd28f912fccfec1846a94e2e1e8f9b0012f557f0c46fe4f3eb0d7a87afcf90b
     # via
     #   -r requirements/sandbox-net.in
-    #   msoffcrypto-tool
     #   paramiko
     #   pdfminer-six
     #   pyspnego
@@ -988,14 +978,6 @@ duckdb==2.0.1 \
     --hash=sha256:f8c5bf863b967ee1fa9b068d1a048c9a3b4b11ad8c17d57df70cd50b67334a10 \
     --hash=sha256:f9458590d4f88d3c862393e3f709c097dc61dcb68533cc895b5d91545736bed6
     # via -r requirements/sandbox-data.in
-easygui==0.98.3 \
-    --hash=sha256:33498710c68b5376b459cd3fc48d1d1f33822139eb3ed01defbc0528326da3ba \
-    --hash=sha256:d653ff79ee1f42f63b5a090f2f98ce02335d86ad8963b3ce2661805cafe99a04
-    # via oletools
-ebcdic==2.0.1 \
-    --hash=sha256:3a1bedfbeee76cab2d7e4de62409ac015cd7afb25d590fe1546105c32a065cf1 \
-    --hash=sha256:645034983a6f4837f0e46e4bfe59d67de0b19e7c4294d33beebe74565cdefae6
-    # via extract-msg
 ebooklib==0.21 \
     --hash=sha256:8cb417bed66567210661e6ef203f6310f394ad4a282f385a07320cbc09906c30 \
     --hash=sha256:fa815d544f722321c9fd31d8957473b2617027d3091431aa690d6dd93f785222
@@ -1008,10 +990,6 @@ exifread==3.5.1 \
     --hash=sha256:9f998f80d3062741c976dfc4fd033424bc40932937994e4d2181eb70c4b6aedd \
     --hash=sha256:e5426ce2857423ad401e575ea9d159dc97449dc041fb6e61b35109caea72c311
     # via -r requirements/sandbox-ocr.in
-extract-msg==0.58.3 \
-    --hash=sha256:2033871f1e6d475d82e7b726d3ec15c92bccff46094015d60f4d4dbfeadeb44b \
-    --hash=sha256:3a261d23bd6e0bb294ef4a519646ffc35cf520498e38eccf2b99bb7855b38814
-    # via -r requirements/sandbox-docs.in
 fastapi==0.165.0 \
     --hash=sha256:896f48462042bb4f162147eb8fac7e858753dc1f486765709baf105d70e4fc5b \
     --hash=sha256:dd94d4128319c1e1d50535ab023ab698f850a4d2822f0e181747b46f4ff3c0ab
@@ -1766,10 +1744,6 @@ langsmith==0.16.2 \
     --hash=sha256:9553b6fa4d7520d4a0e597ffa2630002b3d5878248baa815917dab2d3e89bc4c \
     --hash=sha256:991592265e5ae7087d5ce0b77545ea593f0e4648e8f23178b12bb44be4ac3f96
     # via langchain-core
-lark==1.3.1 \
-    --hash=sha256:b426a7a6d6d53189d318f2b6236ab5d6429eaf09259f1ca33eb716eed10d2905 \
-    --hash=sha256:c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12
-    # via rtfde
 lxml==6.1.3 \
     --hash=sha256:032a0a97eed428bd143c75a11118238546424ceb2fa311cca5f073aa44658dc4 \
     --hash=sha256:05f5bce9af14fd1506997594bd81cee6d9c6b58ea80a39c058327aa6371ed9e9 \
@@ -2304,10 +2278,6 @@ msgpack==1.2.4 \
     --hash=sha256:fb811ac3d463a75013b234d2aae56b9f0bdb0105caf4dd2ee65305b6a8a6078d \
     --hash=sha256:fb9ddbf23b8c6e89752af399fcf4daed60055e239cda44c6acfaa76d19331e8c
     # via hishel
-msoffcrypto-tool==6.1.0 \
-    --hash=sha256:32ced1299858018e6c1ca3d0007127335dbcff90e777a77eb52f92d5112869f8 \
-    --hash=sha256:e2d7dfca6ff69cf3da0a7225329e6c26febb4360f329db4937d6ee527fdd2569
-    # via oletools
 multidict==7.2.1 \
     --hash=sha256:02009b402129a73e1f3da68f48eb999afbacd29f25aef0d5052b84ff5c2786a2 \
     --hash=sha256:02d9c04d395a36eeebe89e45f2269614a4675b8e83fddcba15bba2be903971e5 \
@@ -2570,16 +2540,7 @@ olefile==0.47 \
     --hash=sha256:599383381a0bf3dfbd932ca0ca6515acd174ed48870cbf7fee123d698c192c1c
     # via
     #   -r requirements/sandbox-docs.in
-    #   extract-msg
     #   markitdown
-    #   msoffcrypto-tool
-    #   oletools
-oletools==0.60.2 \
-    --hash=sha256:72ad8bd748fd0c4e7b5b4733af770d11543ebb2bf2697455f99f975fcd50cc96 \
-    --hash=sha256:ad452099f4695ffd8855113f453348200d195ee9fa341a09e197d66ee7e0b2c3
-    # via
-    #   pcodedmp
-    #   rtfde
 onnxruntime==1.32.0 \
     --hash=sha256:02ea12a28c069ea8510093d95a7f6ff8126bfd9fc5c0d3381c03b80fb2b424ba \
     --hash=sha256:2303372a85299b6757b0e11e1cbf13e410ddf7e10c37f4b37e99d1c90e7daf7c \
@@ -2878,10 +2839,6 @@ pathspec==1.1.1 \
     --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \
     --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
     # via -r requirements/sandbox-fs.in
-pcodedmp==1.2.6 \
-    --hash=sha256:025f8c809a126f45a082ffa820893e6a8d990d9d7ddb68694b5a9f0a6dbcd955 \
-    --hash=sha256:4441f7c0ab4cbda27bd4668db3b14f36261d86e5059ce06c0828602cbe1c4278
-    # via oletools
 pdf2docx==0.5.13 \
     --hash=sha256:75eff485d4fdcd28237783a65c1bc5e9eaf9fbc747fcacee6c5c16c8ffa7a6a9 \
     --hash=sha256:a293e9e78d89b12a4a43fcefba1346de220681c3daf20b8a7d3e1fce77f0fe97
@@ -3928,9 +3885,7 @@ pynacl==1.6.2 \
 pyparsing==3.3.3 \
     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4
-    # via
-    #   matplotlib
-    #   oletools
+    # via matplotlib
 pypdf==7.1.1 \
     --hash=sha256:04c5680d4b4cfa04ab505b09393fc949860c34a4dad6565284d11a2f5c3ce8b1 \
     --hash=sha256:2eff4e2fc5fb22a6d6711e6f1166cdc9ab5765d90cd0d77dfea3f4aa91a27b1d
@@ -4268,9 +4223,6 @@ rarfile==4.5 \
     --hash=sha256:7425d0afa180f0092db903abb1526a130b36858980aad90b3694f48e41420155 \
     --hash=sha256:c74341f4b9a3a3ebb35ef396d59daf059eb028f34995a7162950a41d97b84de9
     # via -r requirements/sandbox-fs.in
-red-black-tree-mod==1.22 \
-    --hash=sha256:38e3652903a2bf96379c27c2082ca0b7b905158662dd7ef0c97f4fd93a9aa908
-    # via extract-msg
 redis==8.2.0 \
     --hash=sha256:4ff649f10fae5e7e97798fb2a84e84a0a66e98310d75cad2b5a572ce0f9f15a7 \
     --hash=sha256:58b1493d83ba8f0e3ffe6bd781194ca5c01c91267ae03d29c1087b0b3c7d79c9
@@ -4561,10 +4513,6 @@ rpds-py==2026.9.1 \
     # via
     #   jsonschema
     #   referencing
-rtfde==0.1.2.2 \
-    --hash=sha256:2f0cd6ecd644071e39452e6fc4f4a1435453af0ec7c90ea86fb4fc96010c7f1b \
-    --hash=sha256:d43868c74f21ae9ea5acbfd4176d5de1f2cfae0ff7f267698471c606287c04ec
-    # via extract-msg
 schemdraw==0.23 \
     --hash=sha256:b6af33cf175fb7692ed3f71b5d2702c400e009ae26efe76c6fa4f85d34e0fac5 \
     --hash=sha256:e71afd5ec84edfd9b707331c5bcb49ed7133af85bd17dae461de3fc260b0132f
@@ -4890,9 +4838,7 @@ tzdata==2026.6 \
 tzlocal==5.4.5 \
     --hash=sha256:ba976898bad27945178c9ca25c222c19e322b30c10342b9f40b46714f70d2d5f \
     --hash=sha256:ecab534f6d65d9deb4c4ea52c121ab6dd5958e9b878e71dcb102578269752454
-    # via
-    #   dateparser
-    #   extract-msg
+    # via dateparser
 uharfbuzz==0.57.0 \
     --hash=sha256:0346f79243dea09d4a24a9645d3f84f5c7d59d4d6f7b4ebce984468744de4543 \
     --hash=sha256:0448bc4ab92a9c65a8526fa743452c2313314d1d9675d308cf989da99ace8e04 \

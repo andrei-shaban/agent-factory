@@ -1,5 +1,7 @@
 # vm2/worker/app/graphs/__init__.py
 """
-Graphs package — Реестр скомпилированных графов LangGraph.
-Production Blueprint v5.2 — ВМ №2
+Graphs package. Явная регистрация графов при импорте пакета
+(точка инициализации реестра). Цикла с tasks.py нет: граф импортирует
+cancellation, а не tasks.
 """
+from worker.app.graphs import document_processing  # noqa: F401  (self-registers)

@@ -1,42 +1,24 @@
 # vm1/gateway/app/main.py
 """
 AG-UI Gateway — FastAPI-приложение периметра ВМ №1.
-Production Blueprint v5.2.1.
-
-Модуль реализует шлюз протокола AG-UI между SPA и фабрикой агентов:
+Production Blueprint v5.2.1
 
 - приём RunAgentInput от браузерных клиентов через nginx (auth_request);
-- регистрация рана в реестре ранов PostgreSQL ВМ №2 со статусом QUEUED;
-- постановка задач исполнения и резюма в очередь Redis фабрики ВМ №2
-  через TaskIQ ListQueueBroker (очередь agui:tasks);
-- SSE-relay событий воркеров из Redis Streams (XREAD BLOCK) к клиентам;
-- реконнект потока событий по thread_id с заголовком Last-Event-ID;
-- resume HITL-пауз с идемпотентностью по interrupt_id через таблицу
-  interrupt_decisions (Blueprint §3.1/§5.6: «двойное утверждение HITL
-  даёт ровно один эффект»);
-- кооперативная отмена ранов через статус в реестре;
-- чтение статуса рана из реестра;
-- трейсинг операций шлюза в Langfuse.
+- атомарный входной барьер: runs + thread_locks (дубликат/занятый тред → 409);
+  stale-локи (heartbeat воркера не пришёл 5+ мин) освобождаются автоматически;
+- постановка задач и resume в очередь Redis фабрики (TaskIQ ListQueueBroker);
+- SSE-relay из per-run ленты agui:run:{run_id}:events (XREAD BLOCK);
+- реконнект по Last-Event-ID; снапшот при пустой ленте запрашивается у воркера;
+- resume HITL с идемпотентностью через interrupt_decisions;
+- кооперативная отмена ранов.
 
-Шлюз не исполняет графы — исполнение выполняет Worker на ВМ №2.
-
-Контракт задач с Worker (позиционные аргументы):
-- factory.run_agent(run_id, thread_id, graph_name, initial_state)
-- factory.resume_run(run_id, thread_id, graph_name, interrupt_id, human_response)
-
-Идентификаторы исполнения (run_id, thread_id, user_id) инжектируются
-шлюзом в initial_state: они необходимы узлам графа и event_bus.
-
-Постановка задач реализована через прокси-функции, зарегистрированные
-на брокере с теми же task_name, что и на воркере. Вызов .kiq() отправляет
-сообщение в очередь Redis, откуда его забирает воркер на ВМ №2.
+Трейсинг Langfuse временно отключён (API SDK 5.2.0 требует уточнения сигнатур).
 """
-
 import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
 import orjson
@@ -45,7 +27,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from langfuse import Langfuse
+from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
@@ -74,15 +56,12 @@ class Settings(BaseSettings):
     environment: str = "production"
     log_level: str = "info"
     redis_factory_url: str = "rediss://agui_svc:password@10.0.0.2:6379"
-    redis_factory_tls: bool = True
     task_queue_name: str = "agui:tasks"
     default_graph_name: str = "document_processing"
-    postgres_runtime_url: str = "postgresql+ssl://factory_gateway:password@10.0.0.2:5432/factory?sslmode=require"
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
-    langfuse_host: str = "http://langfuse-web:3000"
-    sse_heartbeat_interval: int = 15
-    sse_reconnect_timeout: int = 300
+    postgres_runtime_url: str = (
+        "postgresql://factory_gateway:password@10.0.0.2:5432/factory?sslmode=require"
+    )
+    stale_lock_ttl_minutes: int = 5
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
@@ -92,11 +71,9 @@ settings = Settings()
 TASK_QUEUE_KEY = settings.task_queue_name
 TASK_RUN_AGENT = "factory.run_agent"
 TASK_RESUME_RUN = "factory.resume_run"
+TASK_PUBLISH_SNAPSHOT = "factory.publish_snapshot"
 
-broker = ListQueueBroker(
-    url=settings.redis_factory_url,
-    queue_name=TASK_QUEUE_KEY,
-)
+broker = ListQueueBroker(url=settings.redis_factory_url, queue_name=TASK_QUEUE_KEY)
 
 
 @broker.task(task_name=TASK_RUN_AGENT)
@@ -109,17 +86,19 @@ async def _proxy_resume_run(*args, **kwargs):
     raise NotImplementedError("Proxy task — executed on Worker")
 
 
+@broker.task(task_name=TASK_PUBLISH_SNAPSHOT)
+async def _proxy_publish_snapshot(*args, **kwargs):
+    raise NotImplementedError("Proxy task — executed on Worker")
+
+
 class RunAgentInput(BaseModel):
-    thread_id: str = Field(..., description="Идентификатор треда (диалога)")
-    run_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        description="Идентификатор рана",
-    )
-    messages: list[dict] = Field(default_factory=list, description="История сообщений")
-    state: dict = Field(default_factory=dict, description="Состояние графа")
-    tools: list[dict] = Field(default_factory=list, description="Доступные инструменты")
-    context: dict = Field(default_factory=dict, description="Контекст выполнения")
-    forwarded_props: dict = Field(default_factory=dict, description="Проброшенные свойства")
+    thread_id: str = Field(..., description="Идентификатор треда")
+    run_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    messages: list[dict] = Field(default_factory=list)
+    state: dict = Field(default_factory=dict)
+    tools: list[dict] = Field(default_factory=list)
+    context: dict = Field(default_factory=dict)
+    forwarded_props: dict = Field(default_factory=dict)
 
 
 class RunStatus(BaseModel):
@@ -136,18 +115,15 @@ class ResumeRequest(BaseModel):
     value: dict
 
 
-def _stream_key(thread_id: str) -> str:
-    return f"agui:stream:{thread_id}"
+def _stream_key(run_id: str) -> str:
+    return f"agui:run:{run_id}:events"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting AG-UI Gateway", environment=settings.environment)
 
-    app.state.redis = redis.from_url(
-        settings.redis_factory_url,
-        decode_responses=True,
-    )
+    app.state.redis = redis.from_url(settings.redis_factory_url, decode_responses=True)
     try:
         await app.state.redis.ping()
         logger.info("Redis connection established")
@@ -160,13 +136,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         min_size=2,
         max_size=10,
         open=False,
-        kwargs={
-            "autocommit": True,
-            "row_factory": None,
-        },
+        kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": 0},
     )
     await app.state.pg_pool.open()
-
     try:
         async with app.state.pg_pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -180,20 +152,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.broker = broker
     logger.info("Taskiq broker initialized", queue=TASK_QUEUE_KEY)
 
-    app.state.langfuse = Langfuse(
-        public_key=settings.langfuse_public_key,
-        secret_key=settings.langfuse_secret_key,
-        host=settings.langfuse_host,
-    )
-    logger.info("Langfuse client initialized")
-
     yield
 
     logger.info("Shutting down AG-UI Gateway")
     await app.state.redis.close()
     await app.state.pg_pool.close()
     await broker.shutdown()
-    app.state.langfuse.flush()
 
 
 app = FastAPI(
@@ -218,8 +182,7 @@ async def extract_user_headers(request: Request, call_next):
     groups = request.headers.get("X-Forwarded-Groups", "")
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(user=user, groups=groups)
-    response = await call_next(request)
-    return response
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -234,27 +197,60 @@ async def health():
         raise HTTPException(status_code=503, detail=f"Unhealthy: {str(e)}")
 
 
+async def _sse_loop(stream_key: str, last_id: str, run_id: str) -> AsyncGenerator[str, None]:
+    try:
+        while True:
+            result = await app.state.redis.xread({stream_key: last_id}, count=100, block=10000)
+            if not result:
+                yield ": heartbeat\n\n"
+                continue
+            for _, messages in result:
+                for msg_id, msg_data in messages:
+                    last_id = msg_id
+                    event_type = msg_data.get("type", "custom")
+                    event_data = msg_data.get("data", "{}")
+                    yield f"id: {msg_id}\nevent: {event_type}\ndata: {event_data}\n\n"
+                    if event_type in ("RUN_FINISHED", "RUN_ERROR"):
+                        return
+    except asyncio.CancelledError:
+        logger.info("SSE connection closed", run_id=run_id)
+    except Exception as e:
+        logger.error("SSE error", run_id=run_id, error=str(e))
+        yield f"event: error\ndata: {str(e)}\n\n"
+
+
+async def _resolve_run_for_thread(thread_id: str) -> Optional[str]:
+    async with app.state.pg_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT run_id FROM runs
+                WHERE thread_id = %s
+                ORDER BY (status IN ('QUEUED','RUNNING','WAITING_HUMAN')) DESC, created_at DESC
+                LIMIT 1
+                """,
+                (thread_id,),
+            )
+            row = await cur.fetchone()
+            return str(row["run_id"]) if row else None
+
+
+async def _free_stale_lock(conn, thread_id: str) -> None:
+    """Освобождает thread_locks, у которых heartbeat не приходил > TTL."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "DELETE FROM thread_locks WHERE thread_id = %s AND locked_at < NOW() - INTERVAL '%s minutes'",
+            (thread_id, settings.stale_lock_ttl_minutes),
+        )
+
+
 @app.post("/api/agent")
 async def run_agent(input: RunAgentInput, request: Request):
     user = request.headers.get("X-Forwarded-User", "anonymous")
     graph_name = str(input.context.get("graph_name") or settings.default_graph_name)
-    logger.info(
-        "RunAgentInput received",
-        thread_id=input.thread_id,
-        run_id=input.run_id,
-        user=user,
-        graph_name=graph_name,
-    )
-
-    app.state.langfuse.trace(
-        name="gateway.run_agent",
-        metadata={
-            "thread_id": input.thread_id,
-            "run_id": input.run_id,
-            "user": user,
-            "graph_name": graph_name,
-        },
-    )
+    now = datetime.now(timezone.utc)
+    logger.info("RunAgentInput received", thread_id=input.thread_id,
+                run_id=input.run_id, user=user, graph_name=graph_name)
 
     run_payload = {
         "graph_name": graph_name,
@@ -267,34 +263,41 @@ async def run_agent(input: RunAgentInput, request: Request):
 
     try:
         async with app.state.pg_pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO runs (run_id, thread_id, status, "user", payload, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (run_id) DO NOTHING
-                    """,
-                    (
-                        input.run_id,
-                        input.thread_id,
-                        "QUEUED",
-                        user,
-                        orjson.dumps(run_payload).decode("utf-8"),
-                        datetime.utcnow(),
-                        datetime.utcnow(),
-                    ),
-                )
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    # Освобождение stale lock перед INSERT
+                    await _free_stale_lock(conn, input.thread_id)
+
+                    await cur.execute(
+                        """
+                        INSERT INTO runs (run_id, thread_id, status, "user", payload, created_at, updated_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (run_id) DO NOTHING
+                        """,
+                        (input.run_id, input.thread_id, "QUEUED", user,
+                         orjson.dumps(run_payload).decode("utf-8"), now, now),
+                    )
+                    if cur.rowcount == 0:
+                        raise HTTPException(status_code=409, detail="Duplicate run_id")
+                    await cur.execute(
+                        """
+                        INSERT INTO thread_locks (thread_id, run_id, locked_by, locked_at)
+                        VALUES (%s,%s,%s,%s)
+                        ON CONFLICT (thread_id) DO NOTHING
+                        """,
+                        (input.thread_id, input.run_id, user, now),
+                    )
+                    if cur.rowcount == 0:
+                        raise HTTPException(status_code=409, detail="Thread already has an active run")
         logger.info("Run created in registry", run_id=input.run_id, status="QUEUED")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to create run in registry", run_id=input.run_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to create run")
 
-    initial_state = {
-        **input.state,
-        "run_id": input.run_id,
-        "thread_id": input.thread_id,
-        "user_id": user,
-    }
+    initial_state = {**input.state, "run_id": input.run_id,
+                     "thread_id": input.thread_id, "user_id": user}
 
     try:
         await _proxy_run_agent.kiq(input.run_id, input.thread_id, graph_name, initial_state)
@@ -304,279 +307,105 @@ async def run_agent(input: RunAgentInput, request: Request):
         async with app.state.pg_pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
-                    UPDATE runs
-                    SET status = %s, updated_at = %s
-                    WHERE run_id = %s
-                    """,
-                    ("FAILED", datetime.utcnow(), input.run_id),
+                    "UPDATE runs SET status=%s, updated_at=%s WHERE run_id=%s",
+                    ("FAILED", datetime.now(timezone.utc), input.run_id),
                 )
+                await cur.execute("DELETE FROM thread_locks WHERE run_id=%s", (input.run_id,))
         raise HTTPException(status_code=500, detail="Failed to enqueue task")
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        stream_key = _stream_key(input.thread_id)
-        last_id = "$"
-        try:
-            while True:
-                result = await app.state.redis.xread(
-                    {stream_key: last_id},
-                    count=10,
-                    block=5000,
-                )
-                if result:
-                    for _, messages in result:
-                        for msg_id, msg_data in messages:
-                            last_id = msg_id
-                            event_type = msg_data.get("type", "custom")
-                            event_data = msg_data.get("data", "{}")
-                            yield (
-                                f"id: {msg_id}\n"
-                                f"event: {event_type}\n"
-                                f"data: {event_data}\n\n"
-                            )
-                            if event_type in ("RUN_FINISHED", "RUN_ERROR"):
-                                logger.info(
-                                    "Run finished",
-                                    run_id=input.run_id,
-                                    event_type=event_type,
-                                )
-                                return
-                yield ": heartbeat\n\n"
-                await asyncio.sleep(settings.sse_heartbeat_interval)
-        except asyncio.CancelledError:
-            logger.info("SSE connection closed by client", run_id=input.run_id)
-        except Exception as e:
-            logger.error("SSE error", run_id=input.run_id, error=str(e))
-            yield f"event: error\ndata: {str(e)}\n\n"
-
     return StreamingResponse(
-        event_generator(),
+        _sse_loop(_stream_key(input.run_id), "0-0", input.run_id),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
 @app.get("/api/threads/{thread_id}/events")
-async def reconnect_events(
-    thread_id: str,
-    request: Request,
-    last_event_id: Optional[str] = None,
-):
+async def reconnect_events(thread_id: str, request: Request, last_event_id: Optional[str] = None):
     user = request.headers.get("X-Forwarded-User", "anonymous")
-    header_last_id = request.headers.get("Last-Event-ID")
-    if header_last_id:
-        start_id = header_last_id
-    else:
-        start_id = last_event_id if last_event_id else "0-0"
-    logger.info(
-        "Reconnect requested",
-        thread_id=thread_id,
-        last_event_id=start_id,
-        user=user,
-    )
-    stream_key = _stream_key(thread_id)
+    run_id = await _resolve_run_for_thread(thread_id)
+    if not run_id:
+        raise HTTPException(status_code=404, detail="No run found for this thread")
+    key = _stream_key(run_id)
+    start_id = request.headers.get("Last-Event-ID") or last_event_id or "0-0"
+    logger.info("Reconnect requested", thread_id=thread_id, run_id=run_id,
+                last_event_id=start_id, user=user)
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        try:
-            result = await app.state.redis.xread({stream_key: start_id}, count=100)
-            last_id = start_id
-            if result:
-                for _, messages in result:
-                    for msg_id, msg_data in messages:
-                        last_id = msg_id
-                        event_type = msg_data.get("type", "custom")
-                        event_data = msg_data.get("data", "{}")
-                        yield (
-                            f"id: {msg_id}\n"
-                            f"event: {event_type}\n"
-                            f"data: {event_data}\n\n"
-                        )
-            while True:
-                result = await app.state.redis.xread(
-                    {stream_key: last_id}, count=10, block=5000
-                )
-                if result:
-                    for _, messages in result:
-                        for msg_id, msg_data in messages:
-                            last_id = msg_id
-                            event_type = msg_data.get("type", "custom")
-                            event_data = msg_data.get("data", "{}")
-                            yield (
-                                f"id: {msg_id}\n"
-                                f"event: {event_type}\n"
-                                f"data: {event_data}\n\n"
-                            )
-                            if event_type in ("RUN_FINISHED", "RUN_ERROR"):
-                                return
-                yield ": heartbeat\n\n"
-                await asyncio.sleep(settings.sse_heartbeat_interval)
-        except asyncio.CancelledError:
-            logger.info("Reconnect SSE closed", thread_id=thread_id)
-        except Exception as e:
-            logger.error("Reconnect SSE error", thread_id=thread_id, error=str(e))
-            yield f"event: error\ndata: {str(e)}\n\n"
+    async def gen():
+        caught = await app.state.redis.xread({key: start_id}, count=100)
+        if not caught:
+            async with app.state.pg_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT status FROM runs WHERE run_id=%s", (run_id,))
+                    row = await cur.fetchone()
+            if row and row["status"] in ("QUEUED", "RUNNING", "WAITING_HUMAN"):
+                await _proxy_publish_snapshot.kiq(run_id, thread_id, settings.default_graph_name)
+        async for chunk in _sse_loop(key, start_id, run_id):
+            yield chunk
 
     return StreamingResponse(
-        event_generator(),
+        gen(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
 @app.post("/api/threads/{thread_id}/resume")
 async def resume_run(thread_id: str, resume_req: ResumeRequest, request: Request):
-    """
-    Resume HITL-паузы с идемпотентностью.
-    Blueprint §3.1/§5.6: «двойное утверждение HITL даёт ровно один эффект».
-
-    Идемпотентность обеспечивается через таблицу interrupt_decisions:
-    1. Атомарная попытка INSERT с ON CONFLICT DO NOTHING по UNIQUE(run_id, interrupt_id).
-    2. Если rowcount == 0 — значит запись уже существует, возвращаем 409.
-    3. Если rowcount == 1 — запись создана, продолжаем resume.
-
-    Это гарантирует, что параллельные двойные резюмы дадут ровно один эффект.
-    """
     user = request.headers.get("X-Forwarded-User", "anonymous")
-    logger.info(
-        "Resume requested",
-        thread_id=thread_id,
-        interrupt_id=resume_req.interrupt_id,
-        user=user,
-    )
+    logger.info("Resume requested", thread_id=thread_id,
+                interrupt_id=resume_req.interrupt_id, user=user)
 
-    app.state.langfuse.trace(
-        name="gateway.resume_run",
-        metadata={
-            "thread_id": thread_id,
-            "interrupt_id": resume_req.interrupt_id,
-            "user": user,
-        },
-    )
-
+    active_run_id = None
+    graph_name = settings.default_graph_name
     try:
         async with app.state.pg_pool.connection() as conn:
-            async with conn.cursor() as cur:
-                # Проверка идемпотентности по таблице runs (быстрая проверка статуса)
-                await cur.execute(
-                    """
-                    SELECT run_id, status FROM runs
-                    WHERE thread_id = %s AND interrupt_id = %s
-                    """,
-                    (thread_id, resume_req.interrupt_id),
-                )
-                existing = await cur.fetchone()
-                if existing:
-                    existing_run_id, existing_status = existing
-                    if existing_status in ("SUCCEEDED", "FAILED", "CANCELLED"):
-                        logger.warning(
-                            "Resume rejected: interrupt already processed",
-                            thread_id=thread_id,
-                            interrupt_id=resume_req.interrupt_id,
-                            existing_status=existing_status,
-                        )
-                        raise HTTPException(
-                            status_code=409,
-                            detail=f"Interrupt already processed: {existing_status}",
-                        )
-                    if existing_status == "WAITING_HUMAN":
-                        # Дополнительная проверка в interrupt_decisions —
-                        # может быть уже обработано, но статус ещё не обновлён
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT run_id, status, interrupt_id, payload FROM runs
+                        WHERE thread_id = %s AND status IN ('RUNNING','WAITING_HUMAN')
+                        ORDER BY created_at DESC LIMIT 1
+                        """,
+                        (thread_id,),
+                    )
+                    active = await cur.fetchone()
+                    if not active:
                         await cur.execute(
-                            """
-                            SELECT id FROM interrupt_decisions
-                            WHERE interrupt_id = %s
-                            """,
-                            (resume_req.interrupt_id,),
+                            "SELECT status FROM runs WHERE thread_id=%s AND interrupt_id=%s",
+                            (thread_id, resume_req.interrupt_id),
                         )
-                        if await cur.fetchone():
-                            logger.warning(
-                                "Resume rejected: decision already recorded",
-                                thread_id=thread_id,
-                                interrupt_id=resume_req.interrupt_id,
-                            )
+                        prior = await cur.fetchone()
+                        if prior and prior["status"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
                             raise HTTPException(
                                 status_code=409,
-                                detail="Interrupt decision already recorded",
+                                detail=f"Interrupt already processed: {prior['status']}",
                             )
-                        logger.info(
-                            "Resume idempotent: already waiting",
-                            thread_id=thread_id,
-                            interrupt_id=resume_req.interrupt_id,
-                        )
-                        return JSONResponse(
-                            {"status": "already_waiting", "thread_id": thread_id}
-                        )
+                        raise HTTPException(status_code=404, detail="No running run found for this thread")
 
-                # Поиск активного рана
-                await cur.execute(
-                    """
-                    SELECT run_id, payload FROM runs
-                    WHERE thread_id = %s AND status IN ('RUNNING', 'WAITING_HUMAN')
-                    ORDER BY created_at DESC LIMIT 1
-                    """,
-                    (thread_id,),
-                )
-                active = await cur.fetchone()
-                if not active:
-                    logger.error("Resume failed: no running run found", thread_id=thread_id)
-                    raise HTTPException(
-                        status_code=404,
-                        detail="No running run found for this thread",
-                    )
-                active_run_id, active_payload = active
-                if not isinstance(active_payload, dict):
-                    active_payload = {}
-                graph_name = str(active_payload.get("graph_name") or settings.default_graph_name)
+                    active_run_id = active["run_id"]
+                    current_interrupt_id = active["interrupt_id"]
+                    if current_interrupt_id and str(current_interrupt_id) != resume_req.interrupt_id:
+                        raise HTTPException(status_code=409, detail="Interrupt id mismatch")
+                    payload = active["payload"] if isinstance(active["payload"], dict) else {}
+                    graph_name = str(payload.get("graph_name") or settings.default_graph_name)
 
-                # Б-10: Атомарная запись решения в interrupt_decisions.
-                # ON CONFLICT DO NOTHING + rowcount гарантирует идемпотентность:
-                # если запись уже есть (параллельный запрос) — rowcount == 0, возвращаем 409.
-                await cur.execute(
-                    """
-                    INSERT INTO interrupt_decisions (run_id, interrupt_id, "user", decision)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (run_id, interrupt_id) DO NOTHING
-                    """,
-                    (
-                        str(active_run_id),
-                        resume_req.interrupt_id,
-                        user,
-                        orjson.dumps(resume_req.value).decode("utf-8"),
-                    ),
-                )
-                if cur.rowcount == 0:
-                    logger.warning(
-                        "Resume rejected: decision already recorded (concurrent)",
-                        thread_id=thread_id,
-                        interrupt_id=resume_req.interrupt_id,
+                    await cur.execute(
+                        """
+                        INSERT INTO interrupt_decisions (run_id, interrupt_id, "user", decision)
+                        VALUES (%s,%s,%s,%s)
+                        ON CONFLICT (run_id, interrupt_id) DO NOTHING
+                        """,
+                        (str(active_run_id), resume_req.interrupt_id, user,
+                         orjson.dumps(resume_req.value).decode("utf-8")),
                     )
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Interrupt decision already recorded",
-                    )
+                    if cur.rowcount == 0:
+                        raise HTTPException(status_code=409, detail="Interrupt decision already recorded")
 
-                # Обновление статуса рана
-                await cur.execute(
-                    """
-                    UPDATE runs
-                    SET status = %s, interrupt_id = %s, updated_at = %s
-                    WHERE thread_id = %s AND status IN ('RUNNING', 'WAITING_HUMAN')
-                    """,
-                    ("WAITING_HUMAN", resume_req.interrupt_id, datetime.utcnow(), thread_id),
-                )
-                if cur.rowcount == 0:
-                    logger.error("Resume failed: no running run found", thread_id=thread_id)
-                    raise HTTPException(
-                        status_code=404,
-                        detail="No running run found for this thread",
+                    await cur.execute(
+                        "UPDATE runs SET interrupt_id=%s, updated_at=%s WHERE run_id=%s",
+                        (resume_req.interrupt_id, datetime.now(timezone.utc), str(active_run_id)),
                     )
     except HTTPException:
         raise
@@ -585,21 +414,18 @@ async def resume_run(thread_id: str, resume_req: ResumeRequest, request: Request
         raise HTTPException(status_code=500, detail="Failed to update run status")
 
     try:
-        await _proxy_resume_run.kiq(
-            str(active_run_id),
-            thread_id,
-            graph_name,
-            resume_req.interrupt_id,
-            resume_req.value,
-        )
-        logger.info(
-            "Resume task enqueued via Taskiq",
-            thread_id=thread_id,
-            run_id=str(active_run_id),
-            interrupt_id=resume_req.interrupt_id,
-        )
+        await _proxy_resume_run.kiq(str(active_run_id), thread_id, graph_name,
+                                    resume_req.interrupt_id, resume_req.value)
+        logger.info("Resume task enqueued via Taskiq", thread_id=thread_id,
+                    run_id=str(active_run_id), interrupt_id=resume_req.interrupt_id)
     except Exception as e:
-        logger.error("Failed to enqueue resume task", thread_id=thread_id, error=str(e))
+        async with app.state.pg_pool.connection() as conn:
+            await conn.execute(
+                "DELETE FROM interrupt_decisions WHERE run_id=%s AND interrupt_id=%s",
+                (str(active_run_id), resume_req.interrupt_id),
+            )
+        logger.error("Resume enqueue failed, decision rolled back",
+                     thread_id=thread_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to enqueue resume task")
 
     return JSONResponse({"status": "accepted", "thread_id": thread_id})
@@ -609,69 +435,48 @@ async def resume_run(thread_id: str, resume_req: ResumeRequest, request: Request
 async def cancel_run(run_id: str, request: Request):
     user = request.headers.get("X-Forwarded-User", "anonymous")
     logger.info("Cancel requested", run_id=run_id, user=user)
-
-    app.state.langfuse.trace(
-        name="gateway.cancel_run",
-        metadata={
-            "run_id": run_id,
-            "user": user,
-        },
-    )
-
     try:
         async with app.state.pg_pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE runs
-                    SET status = %s, updated_at = %s
-                    WHERE run_id = %s AND status IN ('QUEUED', 'RUNNING', 'WAITING_HUMAN')
-                    """,
-                    ("CANCELLED", datetime.utcnow(), run_id),
-                )
-                if cur.rowcount == 0:
-                    logger.warning(
-                        "Cancel failed: run not found or already terminal",
-                        run_id=run_id,
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE runs SET status=%s, updated_at=%s
+                        WHERE run_id=%s AND status IN ('QUEUED','RUNNING','WAITING_HUMAN')
+                        """,
+                        ("CANCELLED", datetime.now(timezone.utc), run_id),
                     )
-                    raise HTTPException(
-                        status_code=404,
-                        detail="Run not found or already completed",
-                    )
+                    if cur.rowcount == 0:
+                        raise HTTPException(status_code=404, detail="Run not found or already completed")
+                    await cur.execute("DELETE FROM thread_locks WHERE run_id=%s", (run_id,))
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Failed to cancel run", run_id=run_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to cancel run")
-
     logger.info("Run cancelled", run_id=run_id)
     return JSONResponse({"status": "accepted", "run_id": run_id})
 
 
 @app.get("/api/runs/{run_id}/status")
 async def get_run_status(run_id: str, request: Request):
-    request.headers.get("X-Forwarded-User", "anonymous")
     try:
         async with app.state.pg_pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
-                    SELECT run_id, thread_id, status, "user", created_at, updated_at
-                    FROM runs
-                    WHERE run_id = %s
-                    """,
+                    'SELECT run_id, thread_id, status, "user", created_at, updated_at FROM runs WHERE run_id=%s',
                     (run_id,),
                 )
                 row = await cur.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="Run not found")
                 return RunStatus(
-                    run_id=str(row[0]),
-                    thread_id=str(row[1]),
-                    status=row[2],
-                    user=row[3],
-                    created_at=row[4].isoformat() if row[4] else "",
-                    updated_at=row[5].isoformat() if row[5] else "",
+                    run_id=str(row["run_id"]),
+                    thread_id=str(row["thread_id"]),
+                    status=row["status"],
+                    user=row["user"],
+                    created_at=row["created_at"].isoformat() if row["created_at"] else "",
+                    updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
                 )
     except HTTPException:
         raise
@@ -683,19 +488,11 @@ async def get_run_status(run_id: str, request: Request):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled exception", error=str(exc), exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        workers=4,
-        log_level=settings.log_level.lower(),
-    )
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, workers=4,
+                log_level=settings.log_level.lower())
