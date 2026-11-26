@@ -9,7 +9,6 @@ mammoth
 docx2txt
 python-pptx
 pypdf
-pdfplumber
 pymupdf
 reportlab
 olefile

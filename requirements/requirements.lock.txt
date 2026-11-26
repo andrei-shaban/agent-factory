@@ -2900,9 +2900,7 @@ pdfminer-six==20260107 \
 pdfplumber==0.11.11 \
     --hash=sha256:81fd7c493ac69a0645a68da49320e4e2cace05d99824439accc7b5b3d955f3bc \
     --hash=sha256:e38eb7d3a4c822f93067cf6694dcec655f032619f4bd41ebd34f882fc22fbb87
-    # via
-    #   -r requirements/sandbox-docs.in
-    #   markitdown
+    # via markitdown
 pikepdf[pdfa]==10.18.2 \
     --hash=sha256:03bfbf28cec85888e5d5e01e684e5e0249b513a01eada2eb0cb04d6f2c3a0fa8 \
     --hash=sha256:198cf50b5e08b77c657068d304aeae6846424dbd60170734cfc5888648387fe9 \
