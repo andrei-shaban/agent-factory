@@ -8,3 +8,4 @@ vm1/logs/
 wheelhouse/
 wheelhouse.sha256
 vm1/pypiserver/packages/
+/pip-cache/
