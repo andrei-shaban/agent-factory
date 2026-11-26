@@ -15,12 +15,19 @@ Production Blueprint v5.2 — ВМ №2
 - RUNNING/WAITING_HUMAN → SUCCEEDED (при успешном завершении)
 - RUNNING/WAITING_HUMAN → FAILED (при ошибке)
 - QUEUED/RUNNING/WAITING_HUMAN → CANCELLED (при отмене через Gateway)
+
+Воркер управляет переходами через функцию _update_run_status().
+Переход из терминального статуса (SUCCEEDED/FAILED/CANCELLED) запрещён.
+
+Кооперативная отмена (Blueprint §3.1):
+Воркер проверяет флаг CANCELLED перед каждым шагом графа через _check_cancellation().
+При обнаружении отмены — бросает RunCancelledError, граф останавливается,
+статус рана устанавливается в CANCELLED.
 """
 from typing import Any, Dict, Optional
 
 import psycopg
 import structlog
-from psycopg_pool import AsyncConnectionPool
 
 from worker.app.broker import broker
 from worker.app.graphs.registry import graph_registry
@@ -29,53 +36,102 @@ from worker.app.settings import get_settings
 
 logger = structlog.get_logger()
 
+TERMINAL_STATUSES = ("SUCCEEDED", "FAILED", "CANCELLED")
+WAITING_STATUSES = ("specialist_reviewed", "waiting_hitl", "waiting")
+
+
+# ==============================================================================
+# ИСКЛЮЧЕНИЯ
+# ==============================================================================
+class RunCancelledError(Exception):
+    """
+    Исключение, сигнализирующее об отмене рана оператором.
+    Бросается функцией _check_cancellation() при обнаружении статуса CANCELLED.
+    """
+    pass
+
 
 # ==============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==============================================================================
+async def _check_cancellation(run_id: str) -> None:
+    """
+    Проверяет статус рана в реестре PostgreSQL.
+    Если статус CANCELLED — бросает RunCancelledError.
+    Blueprint §3.1: воркер проверяет флаг перед каждым шагом.
+
+    При ошибке подключения к БД — логирует предупреждение и продолжает выполнение
+    (не блокируем работу из-за временных проблем с БД).
+    """
+    settings = get_settings()
+    url = settings.postgres_runtime_url
+    if url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    elif url.startswith("postgresql+ssl://"):
+        url = url.replace("postgresql+ssl://", "postgresql://", 1)
+
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT status FROM runs WHERE run_id = %s",
+                    (run_id,),
+                )
+                row = await cur.fetchone()
+                if row and row[0] == "CANCELLED":
+                    logger.info("Run cancelled by operator", run_id=run_id)
+                    raise RunCancelledError(f"Run {run_id} was cancelled")
+    except RunCancelledError:
+        raise
+    except Exception as e:
+        logger.warning(
+            "Failed to check cancellation status, continuing execution",
+            run_id=run_id,
+            error=str(e),
+        )
+
+
 async def _update_run_status(
         run_id: str,
         status: str,
         interrupt_id: Optional[str] = None,
         error: Optional[str] = None,
+        clear_interrupt: bool = False,
 ) -> None:
     """
     Обновляет статус рана в реестре PostgreSQL.
-    Blueprint §3.1: воркер управляет жизненным циклом статусов.
+    Не перетирает терминальные статусы (SUCCEEDED/FAILED/CANCELLED).
+    При clear_interrupt=True явно сбрасывает interrupt_id (для resume).
     """
     settings = get_settings()
-    url = settings.postgres_runtime_url.replace("postgresql+asyncpg://", "postgresql://")
+    url = settings.postgres_runtime_url
+    if url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    elif url.startswith("postgresql+ssl://"):
+        url = url.replace("postgresql+ssl://", "postgresql://", 1)
+
     try:
         async with await psycopg.AsyncConnection.connect(url) as conn:
             async with conn.cursor() as cur:
-                if interrupt_id:
-                    await cur.execute(
-                        """
-                        UPDATE runs
-                        SET status = %s, interrupt_id = %s, updated_at = NOW()
-                        WHERE run_id = %s
-                        """,
-                        (status, interrupt_id, run_id),
+                await cur.execute(
+                    "SELECT status FROM runs WHERE run_id = %s",
+                    (run_id,),
+                )
+                row = await cur.fetchone()
+                if not row:
+                    logger.warning("Run not found in registry", run_id=run_id)
+                    return
+                current_status = row[0]
+                if current_status in TERMINAL_STATUSES:
+                    logger.debug(
+                        "Skipping status update: run already terminal",
+                        run_id=run_id,
+                        current=current_status,
+                        requested=status,
                     )
-                elif error:
-                    await cur.execute(
-                        """
-                        UPDATE runs
-                        SET status = %s, error = %s, finished_at = NOW(), updated_at = NOW()
-                        WHERE run_id = %s
-                        """,
-                        (status, error, run_id),
-                    )
-                elif status in ("SUCCEEDED", "FAILED"):
-                    await cur.execute(
-                        """
-                        UPDATE runs
-                        SET status = %s, finished_at = NOW(), updated_at = NOW()
-                        WHERE run_id = %s
-                        """,
-                        (status, run_id),
-                    )
-                else:
+                    return
+
+                if status == "RUNNING":
                     await cur.execute(
                         """
                         UPDATE runs
@@ -84,8 +140,58 @@ async def _update_run_status(
                         """,
                         (status, run_id),
                     )
+                elif status in ("SUCCEEDED", "FAILED"):
+                    await cur.execute(
+                        """
+                        UPDATE runs
+                        SET status = %s, error = %s, finished_at = NOW(), updated_at = NOW()
+                        WHERE run_id = %s
+                        """,
+                        (status, error, run_id),
+                    )
+                elif status == "WAITING_HUMAN":
+                    await cur.execute(
+                        """
+                        UPDATE runs
+                        SET status = %s, interrupt_id = %s, updated_at = NOW()
+                        WHERE run_id = %s
+                        """,
+                        (status, interrupt_id, run_id),
+                    )
+                elif status == "CANCELLED":
+                    await cur.execute(
+                        """
+                        UPDATE runs
+                        SET status = %s, finished_at = NOW(), updated_at = NOW()
+                        WHERE run_id = %s
+                        """,
+                        (status, run_id),
+                    )
+                elif clear_interrupt:
+                    await cur.execute(
+                        """
+                        UPDATE runs
+                        SET status = %s, interrupt_id = NULL, updated_at = NOW()
+                        WHERE run_id = %s
+                        """,
+                        (status, run_id),
+                    )
+                else:
+                    await cur.execute(
+                        """
+                        UPDATE runs
+                        SET status = %s, updated_at = NOW()
+                        WHERE run_id = %s
+                        """,
+                        (status, run_id),
+                    )
     except Exception as e:
-        logger.error("Failed to update run status in DB", run_id=run_id, status=status, error=str(e))
+        logger.error(
+            "Failed to update run status in registry",
+            run_id=run_id,
+            status=status,
+            error=str(e),
+        )
 
 
 # ==============================================================================
@@ -100,17 +206,23 @@ async def run_agent_graph(
 ) -> Dict[str, Any]:
     """
     Основная задача: запуск графа LangGraph.
-
-    Жизненный цикл статусов:
-    1. QUEUED → RUNNING (при старте)
-    2. RUNNING → WAITING_HUMAN (при interrupt, если граф остановился)
-    3. RUNNING → SUCCEEDED (при успешном завершении)
-    4. RUNNING → FAILED (при ошибке)
+    Управляет жизненным циклом статусов: QUEUED → RUNNING → SUCCEEDED/FAILED/WAITING_HUMAN.
+    Проверяет флаг отмены перед стартом (Blueprint §3.1).
     """
     log = logger.bind(run_id=run_id, thread_id=thread_id, graph=graph_name)
     log.info("Starting LangGraph execution")
 
-    # Обновляем статус на RUNNING
+    # Проверка отмены перед стартом (Blueprint §3.1)
+    try:
+        await _check_cancellation(run_id)
+    except RunCancelledError:
+        log.info("Run already cancelled before start", run_id=run_id)
+        return {
+            "status": "cancelled",
+            "run_id": run_id,
+            "thread_id": thread_id,
+        }
+
     await _update_run_status(run_id, "RUNNING")
 
     try:
@@ -123,17 +235,13 @@ async def run_agent_graph(
         status = final_state.get("status", "unknown")
         log.info("LangGraph execution finished", status=status)
 
-        # Определяем финальный статус
         if status in ("approved", "auto_approved", "output_generated"):
             final_status = "SUCCEEDED"
-        elif status == "waiting_hitl":
-            # Граф остановился на interrupt — статус WAITING_HUMAN
-            # interrupt_id будет установлен через event_bus
+        elif status in WAITING_STATUSES:
             final_status = "WAITING_HUMAN"
         else:
             final_status = "FAILED"
 
-        # Обновляем статус в БД
         await _update_run_status(run_id, final_status)
 
         return {
@@ -142,12 +250,17 @@ async def run_agent_graph(
             "thread_id": thread_id,
             "final_state": final_state,
         }
+    except RunCancelledError:
+        log.info("Run cancelled during execution", run_id=run_id)
+        await _update_run_status(run_id, "CANCELLED")
+        return {
+            "status": "cancelled",
+            "run_id": run_id,
+            "thread_id": thread_id,
+        }
     except Exception as e:
         log.error("LangGraph execution failed", error=str(e), exc_info=True)
-
-        # Обновляем статус на FAILED
         await _update_run_status(run_id, "FAILED", error=str(e))
-
         return {
             "status": "failed",
             "run_id": run_id,
@@ -169,17 +282,24 @@ async def resume_agent_graph(
 ) -> Dict[str, Any]:
     """
     Возобновление исполнения графа после утверждения формы специалистом.
-
-    Жизненный цикл статусов:
-    1. WAITING_HUMAN → RUNNING (при резюме)
-    2. RUNNING → SUCCEEDED (при успешном завершении)
-    3. RUNNING → FAILED (при ошибке)
+    Управляет жизненным циклом статусов: WAITING_HUMAN → RUNNING → SUCCEEDED/FAILED.
+    Проверяет флаг отмены перед резюме (Blueprint §3.1).
     """
     log = logger.bind(run_id=run_id, thread_id=thread_id, interrupt_id=interrupt_id)
     log.info("Resuming LangGraph after HITL", response_keys=list(human_response.keys()))
 
-    # Обновляем статус на RUNNING (сбрасываем interrupt_id)
-    await _update_run_status(run_id, "RUNNING", interrupt_id=None)
+    # Проверка отмены перед резюме (Blueprint §3.1)
+    try:
+        await _check_cancellation(run_id)
+    except RunCancelledError:
+        log.info("Run already cancelled before resume", run_id=run_id)
+        return {
+            "status": "cancelled",
+            "run_id": run_id,
+            "thread_id": thread_id,
+        }
+
+    await _update_run_status(run_id, "RUNNING", clear_interrupt=True)
 
     try:
         final_state = await graph_registry.resume(
@@ -191,13 +311,11 @@ async def resume_agent_graph(
         status = final_state.get("status", "unknown")
         log.info("LangGraph resumed successfully", status=status)
 
-        # Определяем финальный статус
         if status in ("approved", "auto_approved", "output_generated"):
             final_status = "SUCCEEDED"
         else:
             final_status = "FAILED"
 
-        # Обновляем статус в БД
         await _update_run_status(run_id, final_status)
 
         return {
@@ -206,12 +324,17 @@ async def resume_agent_graph(
             "thread_id": thread_id,
             "final_state": final_state,
         }
+    except RunCancelledError:
+        log.info("Run cancelled during resume", run_id=run_id)
+        await _update_run_status(run_id, "CANCELLED")
+        return {
+            "status": "cancelled",
+            "run_id": run_id,
+            "thread_id": thread_id,
+        }
     except Exception as e:
         log.error("LangGraph resume failed", error=str(e), exc_info=True)
-
-        # Обновляем статус на FAILED
         await _update_run_status(run_id, "FAILED", error=str(e))
-
         return {
             "status": "failed",
             "run_id": run_id,
@@ -233,12 +356,8 @@ async def execute_sandbox_tool(
 ) -> Dict[str, Any]:
     """
     Запуск недоверенного кода в изолированном контейнере gVisor.
-    Blueprint §3.2:
-    - runtime: runsc (gVisor)
-    - network: none
-    - read-only rootfs + tmpfs
-    - cap-drop ALL, no-new-privileges
-    - лимиты CPU/memory/pids
+    Blueprint §3.2: runtime runsc, network none, read-only rootfs + tmpfs,
+    cap-drop ALL, no-new-privileges, лимиты CPU/memory/pids.
     """
     log = logger.bind(run_id=run_id, tool=tool_name, image=toolset_image)
     log.info("Starting sandbox execution")
@@ -247,7 +366,6 @@ async def execute_sandbox_tool(
     sandbox = SandboxClient(settings)
 
     try:
-        # Подготовка входных файлов для песочницы
         import json
         input_files = {
             "payload.json": json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -267,7 +385,6 @@ async def execute_sandbox_tool(
                 artifacts_count=len(result.artifacts),
             )
 
-            # Загрузка артефактов в SeaweedFS
             from worker.app.integrations import s3_client
             artifact_urls = []
             for artifact_name, artifact_bytes in result.artifacts.items():

@@ -2,40 +2,54 @@
 """
 Document Processing Graph — Пайплайн обработки ПЗД (акты КС-2/КС-3, УПД).
 Production Blueprint v5.2 — ВМ №2
+
 Бизнес-логика (Ф1–Ф5):
 Ф1. Загрузка и распознавание документа (OCR на .228).
 Ф2. Извлечение позиций акта (LLM-экстракция).
 Ф3. Сверка позиций со ставками ЕРР (корп PG, нечёткий поиск).
 Ф4. HITL-проверка специалистом (расхождения, низкая уверенность).
 Ф5. Генерация выходного шаблона SAP/Визирь (песочница gVisor)
-+ HITL-утверждение ЗГД + финализация артефактов.
+    + HITL-утверждение ЗГД + финализация артефактов.
+
 Observability:
- События AG-UI → Redis Streams (event_bus) для SSE-relay через Gateway.
- Трейсы → Langfuse (langfuse_client): trace на весь запуск, span на узел.
- Чекпоинты состояния — в PostgreSQL (thread_id).
+    События AG-UI → Redis Streams (event_bus) для SSE-relay через Gateway.
+    Трейсы → Langfuse (langfuse_client): trace на весь запуск, span на узел.
+    Чекпоинты состояния — в PostgreSQL (thread_id).
+
+Кооперативная отмена (Blueprint §3.1):
+    Каждый узел графа проверяет флаг CANCELLED через _check_cancellation()
+    перед выполнением. При обнаружении отмены — бросает RunCancelledError,
+    граф останавливается, статус рана устанавливается в CANCELLED.
+
+HITL-узлы (Blueprint §3.1):
+    interrupt() размещается в отдельной ноде БЕЗ побочных эффектов.
+    Подготовка (публикация событий, Langfuse) выполняется в отдельной ноде
+    перед interrupt-нодой. Это предотвращает дублирование эффектов при реплее.
+
 Интегрируется с GraphRegistry (worker.app.graphs.registry).
 """
 import json
 import operator
 import uuid
 from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
+
 import structlog
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
+
 from worker.app.event_bus import event_bus
 from worker.app.integrations import corp_pg_client, gpu_client, langfuse_client, s3_client
 from worker.app.sandbox import SandboxClient
 from worker.app.settings import get_settings
+from worker.app.tasks import RunCancelledError, _check_cancellation
 
 logger = structlog.get_logger()
 
 # ==============================================================================
 # ГЛОБАЛЬНЫЙ КЭШ TRACE'ОВ (по run_id)
 # ==============================================================================
-# Trace создаётся при первом узле, завершается в finalize.
-# Хранится в памяти процесса воркера — безопасно, т.к. run_id уникален.
 _active_traces: Dict[str, Any] = {}
-_active_spans: Dict[str, Any] = {}  # ключ: f"{run_id}:{node_name}"
+_active_spans: Dict[str, Any] = {}
 
 
 def _get_or_create_trace(state: DocumentState) -> Any:
@@ -70,8 +84,7 @@ def _start_span(state: DocumentState, node_name: str, input_data: Optional[Dict[
     return span
 
 
-def _end_span(state: DocumentState, node_name: str, output_data: Optional[Dict[str, Any]] = None,
-              status: str = "success") -> None:
+def _end_span(state: DocumentState, node_name: str, output_data: Optional[Dict[str, Any]] = None, status: str = "success") -> None:
     """Завершить span узла."""
     key = f"{state['run_id']}:{node_name}"
     span = _active_spans.pop(key, None)
@@ -105,7 +118,6 @@ def _finalize_trace(state: DocumentState) -> None:
             name="run_finished",
             output_data={"status": state.get("status")},
         )
-    # Langfuse SDK автоматически завершит trace при flush
 
 
 # ==============================================================================
@@ -121,9 +133,9 @@ class DocumentState(TypedDict):
     thread_id: str
     user_id: str
     # Входящий документ
-    document_key: str  # путь к файлу в S3 (factory-artifacts)
-    document_type: str  # 'ks2' | 'ks3' | 'upd' | 'act'
-    contract_id: Optional[str]  # привязка к договору (если известна)
+    document_key: str
+    document_type: str
+    contract_id: Optional[str]
     # Ф1: результат OCR
     ocr_text: Optional[str]
     ocr_tables: Optional[List[Dict[str, Any]]]
@@ -134,10 +146,14 @@ class DocumentState(TypedDict):
     mismatches: Optional[List[Dict[str, Any]]]
     # Ф4: решение специалиста (HITL)
     specialist_decision: Optional[Dict[str, Any]]
+    specialist_interrupt_id: Optional[str]
+    specialist_form_data: Optional[Dict[str, Any]]
     # Ф5: сгенерированный выходной шаблон
     output_artifact_key: Optional[str]
     # Финальное утверждение ЗГД (HITL)
     approver_decision: Optional[Dict[str, Any]]
+    approver_interrupt_id: Optional[str]
+    approver_form_data: Optional[Dict[str, Any]]
     # Статус и сообщения для AG-UI
     status: str
     messages: Annotated[List[Dict[str, Any]], operator.add]
@@ -152,6 +168,8 @@ async def load_and_ocr(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "load_and_ocr"
     log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"document_key": state.get("document_key")})
     try:
@@ -172,6 +190,9 @@ async def load_and_ocr(state: DocumentState) -> DocumentState:
             "ocr_tables": ocr_result.get("tables", []),
             "messages": [{"role": "system", "content": f"Документ распознан: {len(file_bytes)} байт"}],
         }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
     except Exception as e:
         log.error("OCR failed", error=str(e))
         _record_error(state, node_name, e)
@@ -185,6 +206,8 @@ async def extract_positions(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "extract_positions"
     log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"ocr_text_length": len(state.get("ocr_text", ""))})
     try:
@@ -213,6 +236,9 @@ async def extract_positions(state: DocumentState) -> DocumentState:
             "positions": positions,
             "messages": [{"role": "assistant", "content": f"Извлечено позиций: {len(positions)}"}],
         }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
     except Exception as e:
         log.error("Position extraction failed", error=str(e))
         _record_error(state, node_name, e)
@@ -226,9 +252,10 @@ async def match_rates(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "match_rates"
     log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
     await event_bus.publish_node_started(thread_id, run_id, node_name)
-    _start_span(state, node_name, input_data={"positions_count": len(state.get("positions", [])),
-                                              "contract_id": state.get("contract_id")})
+    _start_span(state, node_name, input_data={"positions_count": len(state.get("positions", [])), "contract_id": state.get("contract_id")})
     try:
         log.info("Matching positions against rate registry")
         contract_id = state.get("contract_id")
@@ -264,14 +291,16 @@ async def match_rates(state: DocumentState) -> DocumentState:
                     verification.append({"position_number": pos["number"], "status": "matched"})
         log.info("Matching complete", verified=len(verification), mismatches=len(mismatches))
         _end_span(state, node_name, output_data={"verified": len(verification), "mismatches": len(mismatches)})
-        await event_bus.publish_node_finished(thread_id, run_id, node_name,
-                                              output={"verified": len(verification), "mismatches": len(mismatches)})
+        await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"verified": len(verification), "mismatches": len(mismatches)})
         return {
             "status": "rates_matched",
             "verification": verification,
             "mismatches": mismatches,
             "messages": [{"role": "assistant", "content": f"Сверка: расхождений {len(mismatches)}"}],
         }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
     except Exception as e:
         log.error("Rate matching failed", error=str(e))
         _record_error(state, node_name, e)
@@ -290,12 +319,17 @@ def _fuzzy_match_position(name: str, rates: List[Dict[str, Any]]) -> Optional[Di
     return best if best_score >= 0.75 else None
 
 
-async def specialist_review(state: DocumentState) -> DocumentState:
-    """Ф4: HITL — проверка специалистом расхождений и низкой уверенности."""
+async def specialist_review_prepare(state: DocumentState) -> DocumentState:
+    """
+    Ф4 (часть 1): Подготовка HITL-проверки специалистом.
+    Публикация событий, создание span, запись в Langfuse — побочные эффекты.
+    """
     run_id = state["run_id"]
     thread_id = state["thread_id"]
-    node_name = "specialist_review"
+    node_name = "specialist_review_prepare"
     log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"mismatches_count": len(state.get("mismatches", []))})
     try:
@@ -313,30 +347,74 @@ async def specialist_review(state: DocumentState) -> DocumentState:
             "allowed_actions": ["approve", "correct", "reject"],
         }
 
-        # ИСПРАВЛЕНИЕ Б-03: генерация UUID вместо строки
         interrupt_id = str(uuid.uuid4())
 
-        # HITL-события для SSE и Langfuse
         await event_bus.publish_hitl_interrupt(thread_id, run_id, interrupt_id, form_data)
         langfuse_client.create_event(
             trace=_active_traces.get(run_id),
             name="hitl_interrupt",
             input_data={"form_id": "specialist_verification", "mismatches_count": len(state["mismatches"])},
         )
-        log.info("Pausing for specialist review")
+        log.info("Prepared for specialist review", interrupt_id=interrupt_id)
+
+        return {
+            "specialist_interrupt_id": interrupt_id,
+            "specialist_form_data": form_data,
+        }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
+    except Exception as e:
+        log.error("Specialist review prepare failed", error=str(e))
+        _record_error(state, node_name, e)
+        await event_bus.publish_error(thread_id, run_id, e, node_name=node_name)
+        raise
+
+
+async def specialist_review_interrupt(state: DocumentState) -> DocumentState:
+    """
+    Ф4 (часть 2): HITL-пауза — только interrupt() БЕЗ побочных эффектов.
+    Blueprint §3.1: interrupt() в отдельной ноде без side effects.
+    """
+    run_id = state["run_id"]
+    thread_id = state["thread_id"]
+    node_name = "specialist_review_interrupt"
+    log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
+
+    try:
+        if state.get("specialist_decision", {}).get("auto"):
+            log.info("Auto-approved, skipping interrupt")
+            return state
+
+        interrupt_id = state.get("specialist_interrupt_id")
+        form_data = state.get("specialist_form_data")
+
+        if not interrupt_id or not form_data:
+            log.error("Missing interrupt_id or form_data in state")
+            raise ValueError("specialist_interrupt_id and specialist_form_data required")
+
+        log.info("Pausing for specialist review (interrupt)")
         decision = interrupt(form_data)
+
+        await _check_cancellation(run_id)
+
         await event_bus.publish_hitl_resumed(thread_id, run_id, interrupt_id, decision)
         langfuse_client.create_event(
             trace=_active_traces.get(run_id),
             name="hitl_resumed",
             output_data={"decision": decision},
         )
-        _end_span(state, node_name, output_data={"decision": decision})
-        await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"decision": decision})
+        _end_span(state, "specialist_review_prepare", output_data={"decision": decision})
+        await event_bus.publish_node_finished(thread_id, run_id, "specialist_review_prepare", output={"decision": decision})
         log.info("Specialist decision received", approved=decision.get("approved"))
         return {"status": "specialist_reviewed", "specialist_decision": decision}
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
     except Exception as e:
-        log.error("Specialist review failed", error=str(e))
+        log.error("Specialist review interrupt failed", error=str(e))
         _record_error(state, node_name, e)
         await event_bus.publish_error(thread_id, run_id, e, node_name=node_name)
         raise
@@ -348,6 +426,8 @@ async def generate_output(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "generate_output"
     log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"positions_count": len(state.get("positions", []))})
     try:
@@ -387,13 +467,15 @@ async def generate_output(state: DocumentState) -> DocumentState:
         )
         log.info("Output generated", key=output_key, size=len(output_bytes))
         _end_span(state, node_name, output_data={"artifact_key": output_key, "size": len(output_bytes)})
-        await event_bus.publish_node_finished(thread_id, run_id, node_name,
-                                              output={"artifact_key": output_key, "size": len(output_bytes)})
+        await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"artifact_key": output_key, "size": len(output_bytes)})
         return {
             "status": "output_generated",
             "output_artifact_key": output_key,
             "messages": [{"role": "assistant", "content": "Шаблон SAP сформирован"}],
         }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
     except Exception as e:
         log.error("Output generation failed", error=str(e))
         _record_error(state, node_name, e)
@@ -402,7 +484,7 @@ async def generate_output(state: DocumentState) -> DocumentState:
 
 
 def _apply_specialist_corrections(
-        positions: List[Dict[str, Any]], decision: Dict[str, Any]
+    positions: List[Dict[str, Any]], decision: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
     """Применяет корректировки специалиста к позициям."""
     if not decision.get("corrections"):
@@ -419,12 +501,17 @@ def _to_bytes(data: Any) -> bytes:
     return json.dumps(data, ensure_ascii=False).encode("utf-8")
 
 
-async def approver_sign(state: DocumentState) -> DocumentState:
-    """Ф5 (часть 2): HITL — утверждение акта ЗГД с подписью."""
+async def approver_sign_prepare(state: DocumentState) -> DocumentState:
+    """
+    Ф5 (часть 2, подготовка): HITL-утверждение акта ЗГД.
+    Публикация событий, создание span, запись в Langfuse — побочные эффекты.
+    """
     run_id = state["run_id"]
     thread_id = state["thread_id"]
-    node_name = "approver_sign"
+    node_name = "approver_sign_prepare"
     log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"output_artifact": state.get("output_artifact_key")})
     try:
@@ -437,7 +524,6 @@ async def approver_sign(state: DocumentState) -> DocumentState:
             "allowed_actions": ["sign", "reject"],
         }
 
-        # ИСПРАВЛЕНИЕ Б-03: генерация UUID вместо строки
         interrupt_id = str(uuid.uuid4())
 
         await event_bus.publish_hitl_interrupt(thread_id, run_id, interrupt_id, form_data)
@@ -446,7 +532,46 @@ async def approver_sign(state: DocumentState) -> DocumentState:
             name="hitl_interrupt",
             input_data={"form_id": "approver_sign"},
         )
+        log.info("Prepared for approver sign", interrupt_id=interrupt_id)
+
+        return {
+            "approver_interrupt_id": interrupt_id,
+            "approver_form_data": form_data,
+        }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
+    except Exception as e:
+        log.error("Approver sign prepare failed", error=str(e))
+        _record_error(state, node_name, e)
+        await event_bus.publish_error(thread_id, run_id, e, node_name=node_name)
+        raise
+
+
+async def approver_sign_interrupt(state: DocumentState) -> DocumentState:
+    """
+    Ф5 (часть 2, interrupt): HITL-пауза — только interrupt() БЕЗ побочных эффектов.
+    Blueprint §3.1: interrupt() в отдельной ноде без side effects.
+    """
+    run_id = state["run_id"]
+    thread_id = state["thread_id"]
+    node_name = "approver_sign_interrupt"
+    log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
+
+    try:
+        interrupt_id = state.get("approver_interrupt_id")
+        form_data = state.get("approver_form_data")
+
+        if not interrupt_id or not form_data:
+            log.error("Missing interrupt_id or form_data in state")
+            raise ValueError("approver_interrupt_id and approver_form_data required")
+
         decision = interrupt(form_data)
+
+        await _check_cancellation(run_id)
+
         await event_bus.publish_hitl_resumed(thread_id, run_id, interrupt_id, decision)
         langfuse_client.create_event(
             trace=_active_traces.get(run_id),
@@ -454,14 +579,17 @@ async def approver_sign(state: DocumentState) -> DocumentState:
             output_data={"decision": decision},
         )
         log.info("Approver decision", signed=decision.get("signed"))
-        _end_span(state, node_name, output_data={"signed": decision.get("signed")})
-        await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"signed": decision.get("signed")})
+        _end_span(state, "approver_sign_prepare", output_data={"signed": decision.get("signed")})
+        await event_bus.publish_node_finished(thread_id, run_id, "approver_sign_prepare", output={"signed": decision.get("signed")})
         return {
             "status": "approved" if decision.get("signed") else "rejected",
             "approver_decision": decision,
         }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
     except Exception as e:
-        log.error("Approver sign failed", error=str(e))
+        log.error("Approver sign interrupt failed", error=str(e))
         _record_error(state, node_name, e)
         await event_bus.publish_error(thread_id, run_id, e, node_name=node_name)
         raise
@@ -481,6 +609,8 @@ async def finalize(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "finalize"
     log = logger.bind(run_id=run_id, node=node_name)
+
+    await _check_cancellation(run_id)
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name)
     try:
@@ -499,6 +629,9 @@ async def finalize(state: DocumentState) -> DocumentState:
         return {
             "messages": [{"role": "system", "content": f"Ран завершён: {status}"}],
         }
+    except RunCancelledError:
+        log.info("Node cancelled", node=node_name)
+        raise
     except Exception as e:
         log.error("Finalization failed", error=str(e))
         _record_error(state, node_name, e)
@@ -509,6 +642,13 @@ async def finalize(state: DocumentState) -> DocumentState:
 # ==============================================================================
 # УСЛОВНЫЕ РЁБРА
 # ==============================================================================
+def route_after_specialist_prepare(state: DocumentState) -> Literal["specialist_review_interrupt", "finalize"]:
+    """После подготовки specialist_review: продолжать или отклонить (auto_approved)."""
+    if state.get("specialist_decision", {}).get("auto"):
+        return "finalize"
+    return "specialist_review_interrupt"
+
+
 def route_after_review(state: DocumentState) -> Literal["generate_output", "finalize"]:
     """После проверки специалиста: продолжать или отклонить."""
     if state.get("specialist_decision", {}).get("approved"):
@@ -532,19 +672,23 @@ def build_document_processing_graph() -> StateGraph:
     graph.add_node("load_and_ocr", load_and_ocr)
     graph.add_node("extract_positions", extract_positions)
     graph.add_node("match_rates", match_rates)
-    graph.add_node("specialist_review", specialist_review)
+    graph.add_node("specialist_review_prepare", specialist_review_prepare)
+    graph.add_node("specialist_review_interrupt", specialist_review_interrupt)
     graph.add_node("generate_output", generate_output)
-    graph.add_node("approver_sign", approver_sign)
+    graph.add_node("approver_sign_prepare", approver_sign_prepare)
+    graph.add_node("approver_sign_interrupt", approver_sign_interrupt)
     graph.add_node("finalize", finalize)
 
     # Рёбра
     graph.add_edge(START, "load_and_ocr")
     graph.add_edge("load_and_ocr", "extract_positions")
     graph.add_edge("extract_positions", "match_rates")
-    graph.add_edge("match_rates", "specialist_review")
-    graph.add_conditional_edges("specialist_review", route_after_review)
-    graph.add_edge("generate_output", "approver_sign")
-    graph.add_conditional_edges("approver_sign", route_after_approve)
+    graph.add_edge("match_rates", "specialist_review_prepare")
+    graph.add_conditional_edges("specialist_review_prepare", route_after_specialist_prepare)
+    graph.add_conditional_edges("specialist_review_interrupt", route_after_review)
+    graph.add_edge("generate_output", "approver_sign_prepare")
+    graph.add_edge("approver_sign_prepare", "approver_sign_interrupt")
+    graph.add_conditional_edges("approver_sign_interrupt", route_after_approve)
     graph.add_edge("finalize", END)
 
     return graph
