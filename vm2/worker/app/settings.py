@@ -1,3 +1,4 @@
+# vm2/worker/app/settings.py
 """
 Settings module for the Worker application.
 Production Blueprint v5.2 — ВМ №2

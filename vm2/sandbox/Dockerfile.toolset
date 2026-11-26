@@ -1,3 +1,4 @@
+# vm2/sandbox/Dockerfile.toolset
 # ==============================================================================
 # Dockerfile.toolset — Базовый образ для песочниц gVisor (ВM №2)
 # Production Blueprint v5.2

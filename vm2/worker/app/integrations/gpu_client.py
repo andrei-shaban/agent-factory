@@ -1,3 +1,4 @@
+# vm2/worker/app/integrations/gpu_client.py
 """
 GPU Client — mTLS-клиент для запросов к GPU-узлу (.228).
 Production Blueprint v5.2 — ВМ №2

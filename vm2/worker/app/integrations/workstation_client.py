@@ -1,3 +1,4 @@
+# vm2/worker/app/integrations/workstation_client.py
 """
 Workstation Client — mTLS-клиент для корпоративной рабочей станции (Этап 2).
 Production Blueprint v5.2 — ВМ №2

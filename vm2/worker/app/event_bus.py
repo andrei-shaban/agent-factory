@@ -1,3 +1,4 @@
+# vm2/worker/app/event_bus.py
 """
 Event Bus — Публикация событий AG-UI в Redis Streams.
 Production Blueprint v5.2 — ВМ №2

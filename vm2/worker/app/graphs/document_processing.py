@@ -1,3 +1,4 @@
+# vm2/worker/app/graphs/document_processing.py
 """
 Document Processing Graph — Пайплайн обработки ПЗД (акты КС-2/КС-3, УПД).
 Production Blueprint v5.2 — ВМ №2

@@ -1,3 +1,4 @@
+# vm2/worker/app/integrations/langfuse_client.py
 """
 Langfuse Client — Клиент для трейсинга через Langfuse.
 Production Blueprint v5.2 — ВМ №2

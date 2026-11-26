@@ -1,3 +1,4 @@
+# vm2/worker/app/broker.py
 """
 TaskIQ Broker initialization.
 Production Blueprint v5.2 — ВМ №2

@@ -1,3 +1,4 @@
+# vm2/worker/app/tasks.py
 """
 TaskIQ Tasks — Точки входа для Worker.
 Production Blueprint v5.2 — ВМ №2

@@ -1,3 +1,4 @@
+# vm2/worker/app/integrations/corp_pg_client.py
 """
 Corporate PostgreSQL Client — mTLS-клиент для корпоративного PG (ВМ №4).
 Production Blueprint v5.2

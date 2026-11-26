@@ -1,3 +1,4 @@
+# vm2/worker/app/integrations/s3_client.py
 """
 S3 Client — Клиент для SeaweedFS S3 (ВМ №2).
 Production Blueprint v5.2

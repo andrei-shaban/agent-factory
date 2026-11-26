@@ -1,3 +1,4 @@
+# vm2/worker/app/__init__.py
 """
 Worker Application Package.
 Production Blueprint v5.2 — ВМ №2

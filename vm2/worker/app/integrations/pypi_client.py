@@ -1,3 +1,4 @@
+# vm2/worker/app/integrations/pypi_client.py
 """
 PyPI Client — Клиент для управления wheel-cache через внутреннее зеркало (ВМ №1).
 Production Blueprint v5.2 — ВМ №2

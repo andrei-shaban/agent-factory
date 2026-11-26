@@ -1,3 +1,4 @@
+# vm2/worker/app/tools/generate_sap_template.py
 """
 Generate SAP Template — Инструмент для песочницы gVisor.
 Production Blueprint v5.2

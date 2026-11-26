@@ -1,3 +1,4 @@
+# vm2/worker/app/sandbox.py
 """
 Sandbox Client — Управление изолированными песочницами gVisor.
 Production Blueprint v5.2 — ВМ №2

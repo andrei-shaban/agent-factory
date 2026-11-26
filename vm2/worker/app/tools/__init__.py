@@ -1,3 +1,4 @@
+# vm2/worker/app/tools/__init__.py
 """
 Tools Package — Скрипты и утилиты, выполняемые внутри песочниц gVisor.
 Production Blueprint v5.2 — ВМ №2

@@ -1,3 +1,4 @@
+# vm2/worker/app/graphs/registry.py
 """
 Graph Registry — Реестр и оркестратор графов LangGraph.
 Production Blueprint v5.2 — ВМ №2

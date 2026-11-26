@@ -1,3 +1,4 @@
+# vm2/worker/app/main.py
 """
 TaskIQ Worker Main — Инициализация брокера, жизненный цикл и регистрация задач.
 Production Blueprint v5.2 — ВМ №2
