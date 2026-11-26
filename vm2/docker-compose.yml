@@ -272,7 +272,7 @@ services:
   # SEAWEEDFS — MASTER
   # ============================================================================
   seaweedfs-master:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
     container_name: vm2-seaweedfs-master
     restart: unless-stopped
     command:
@@ -305,7 +305,7 @@ services:
   # SEAWEEDFS — VOLUME
   # ============================================================================
   seaweedfs-volume:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
     container_name: vm2-seaweedfs-volume
     restart: unless-stopped
     command:
@@ -344,7 +344,7 @@ services:
   # Путь к БД задаётся в filer.toml — без него метаданные теряются при пересоздании.
   # ============================================================================
   seaweedfs-filer:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
     container_name: vm2-seaweedfs-filer
     restart: unless-stopped
     command:
@@ -384,7 +384,7 @@ services:
   # SEAWEEDFS — S3 GATEWAY
   # ============================================================================
   seaweedfs-s3:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
     container_name: vm2-seaweedfs-s3
     restart: unless-stopped
     command:
@@ -426,7 +426,7 @@ services:
   # ============================================================================
   docker-socket-proxy:
     profiles: ["sandbox"]
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:3.4
     container_name: vm2-docker-socket-proxy
     restart: unless-stopped
     environment:
