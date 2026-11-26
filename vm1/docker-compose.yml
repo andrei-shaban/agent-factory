@@ -440,7 +440,7 @@ services:
   # Корпоративный Root CA монтируется через bind mount (не вшит в образ).
   # ============================================================================
   gateway:
-    image: factory/gateway:latest
+    image: factory/gateway:1.0.0
     build:
       context: .
       dockerfile: gateway/Dockerfile

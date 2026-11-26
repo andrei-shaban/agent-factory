@@ -2,31 +2,26 @@
 """
 Document Processing Graph — Пайплайн обработки ПЗД (акты КС-2/КС-3, УПД).
 Production Blueprint v5.2 — ВМ №2
-
 Бизнес-логика (Ф1–Ф5):
-  Ф1. Загрузка и распознавание документа (OCR на .228).
-  Ф2. Извлечение позиций акта (LLM-экстракция).
-  Ф3. Сверка позиций со ставками ЕРР (корп PG, нечёткий поиск).
-  Ф4. HITL-проверка специалистом (расхождения, низкая уверенность).
-  Ф5. Генерация выходного шаблона SAP/Визирь (песочница gVisor)
-      + HITL-утверждение ЗГД + финализация артефактов.
-
+Ф1. Загрузка и распознавание документа (OCR на .228).
+Ф2. Извлечение позиций акта (LLM-экстракция).
+Ф3. Сверка позиций со ставками ЕРР (корп PG, нечёткий поиск).
+Ф4. HITL-проверка специалистом (расхождения, низкая уверенность).
+Ф5. Генерация выходного шаблона SAP/Визирь (песочница gVisor)
++ HITL-утверждение ЗГД + финализация артефактов.
 Observability:
-  - События AG-UI → Redis Streams (event_bus) для SSE-relay через Gateway.
-  - Трейсы → Langfuse (langfuse_client): trace на весь запуск, span на узел.
-  - Чекпоинты состояния — в PostgreSQL (thread_id).
-
+ События AG-UI → Redis Streams (event_bus) для SSE-relay через Gateway.
+ Трейсы → Langfuse (langfuse_client): trace на весь запуск, span на узел.
+ Чекпоинты состояния — в PostgreSQL (thread_id).
 Интегрируется с GraphRegistry (worker.app.graphs.registry).
 """
-
 import json
 import operator
+import uuid
 from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
-
 import structlog
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
-
 from worker.app.event_bus import event_bus
 from worker.app.integrations import corp_pg_client, gpu_client, langfuse_client, s3_client
 from worker.app.sandbox import SandboxClient
@@ -75,7 +70,8 @@ def _start_span(state: DocumentState, node_name: str, input_data: Optional[Dict[
     return span
 
 
-def _end_span(state: DocumentState, node_name: str, output_data: Optional[Dict[str, Any]] = None, status: str = "success") -> None:
+def _end_span(state: DocumentState, node_name: str, output_data: Optional[Dict[str, Any]] = None,
+              status: str = "success") -> None:
     """Завершить span узла."""
     key = f"{state['run_id']}:{node_name}"
     span = _active_spans.pop(key, None)
@@ -109,50 +105,39 @@ def _finalize_trace(state: DocumentState) -> None:
             name="run_finished",
             output_data={"status": state.get("status")},
         )
-        # Langfuse SDK автоматически завершит trace при flush
+    # Langfuse SDK автоматически завершит trace при flush
 
 
 # ==============================================================================
 # СОСТОЯНИЕ ГРАФА
 # ==============================================================================
-
-
 class DocumentState(TypedDict):
     """
     Состояние графа обработки ПЗД.
     Чекпоинтится в PostgreSQL по thread_id.
     """
-
     # Идентификаторы (из RunAgentInput Gateway)
     run_id: str
     thread_id: str
     user_id: str
-
     # Входящий документ
-    document_key: str            # путь к файлу в S3 (factory-artifacts)
-    document_type: str           # 'ks2' | 'ks3' | 'upd' | 'act'
-    contract_id: Optional[str]   # привязка к договору (если известна)
-
+    document_key: str  # путь к файлу в S3 (factory-artifacts)
+    document_type: str  # 'ks2' | 'ks3' | 'upd' | 'act'
+    contract_id: Optional[str]  # привязка к договору (если известна)
     # Ф1: результат OCR
     ocr_text: Optional[str]
     ocr_tables: Optional[List[Dict[str, Any]]]
-
     # Ф2: извлечённые позиции
     positions: Optional[List[Dict[str, Any]]]
-
     # Ф3: результаты сверки со ставками ЕРР
     verification: Optional[List[Dict[str, Any]]]
     mismatches: Optional[List[Dict[str, Any]]]
-
     # Ф4: решение специалиста (HITL)
     specialist_decision: Optional[Dict[str, Any]]
-
     # Ф5: сгенерированный выходной шаблон
     output_artifact_key: Optional[str]
-
     # Финальное утверждение ЗГД (HITL)
     approver_decision: Optional[Dict[str, Any]]
-
     # Статус и сообщения для AG-UI
     status: str
     messages: Annotated[List[Dict[str, Any]], operator.add]
@@ -161,35 +146,26 @@ class DocumentState(TypedDict):
 # ==============================================================================
 # УЗЛЫ ГРАФА (ноды)
 # ==============================================================================
-
-
 async def load_and_ocr(state: DocumentState) -> DocumentState:
     """Ф1: Загрузка PDF из S3 и распознавание через OCR (.228)."""
     run_id = state["run_id"]
     thread_id = state["thread_id"]
     node_name = "load_and_ocr"
     log = logger.bind(run_id=run_id, node=node_name)
-
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"document_key": state.get("document_key")})
-
     try:
         log.info("Loading document and running OCR")
         settings = get_settings()
-
         file_bytes = await s3_client.download_file(
             bucket=settings.seaweed_s3_bucket_factory,
             key=state["document_key"],
         )
-
         ocr_result = await gpu_client.ocr(file_content=file_bytes, file_type="pdf")
-
         pages = len(ocr_result.get("layoutParsingResults", []))
         log.info("OCR completed", pages=pages)
-
         _end_span(state, node_name, output_data={"pages": pages, "text_length": len(ocr_result.get("fullText", ""))})
         await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"pages": pages})
-
         return {
             "status": "ocr_done",
             "ocr_text": ocr_result.get("fullText", ""),
@@ -209,13 +185,10 @@ async def extract_positions(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "extract_positions"
     log = logger.bind(run_id=run_id, node=node_name)
-
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"ocr_text_length": len(state.get("ocr_text", ""))})
-
     try:
         log.info("Extracting positions via LLM")
-
         prompt = (
             "Извлеки из текста акта все позиции. Верни JSON-массив объектов с полями: "
             "number (номер позиции), name (наименование работ/материалов), "
@@ -223,7 +196,6 @@ async def extract_positions(state: DocumentState) -> DocumentState:
             "Извлекай строго по данным документа, не выдумывай значения.\n\n"
             f"Текст акта:\n{state['ocr_text']}"
         )
-
         result = await gpu_client.chat_completion(
             messages=[
                 {"role": "system", "content": "Ты — точный экстрактор данных из закрывающих документов."},
@@ -231,15 +203,11 @@ async def extract_positions(state: DocumentState) -> DocumentState:
             ],
             temperature=0.0,
         )
-
         content = result["choices"][0]["message"]["content"]
         positions = json.loads(content)
-
         log.info("Positions extracted", count=len(positions))
-
         _end_span(state, node_name, output_data={"positions_count": len(positions)})
         await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"positions_count": len(positions)})
-
         return {
             "status": "positions_extracted",
             "positions": positions,
@@ -258,24 +226,20 @@ async def match_rates(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "match_rates"
     log = logger.bind(run_id=run_id, node=node_name)
-
     await event_bus.publish_node_started(thread_id, run_id, node_name)
-    _start_span(state, node_name, input_data={"positions_count": len(state.get("positions", [])), "contract_id": state.get("contract_id")})
-
+    _start_span(state, node_name, input_data={"positions_count": len(state.get("positions", [])),
+                                              "contract_id": state.get("contract_id")})
     try:
         log.info("Matching positions against rate registry")
-
         contract_id = state.get("contract_id")
         verification: List[Dict[str, Any]] = []
         mismatches: List[Dict[str, Any]] = []
-
         for pos in state["positions"]:
             rates = await corp_pg_client.get_rates_for_contract(
                 contract_id=contract_id,
                 as_of_date=None,
             )
             matched = _fuzzy_match_position(pos["name"], rates)
-
             if matched is None:
                 mismatches.append({
                     "position": pos,
@@ -298,12 +262,10 @@ async def match_rates(state: DocumentState) -> DocumentState:
                     verification.append({"position_number": pos["number"], "status": "mismatched"})
                 else:
                     verification.append({"position_number": pos["number"], "status": "matched"})
-
         log.info("Matching complete", verified=len(verification), mismatches=len(mismatches))
-
         _end_span(state, node_name, output_data={"verified": len(verification), "mismatches": len(mismatches)})
-        await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"verified": len(verification), "mismatches": len(mismatches)})
-
+        await event_bus.publish_node_finished(thread_id, run_id, node_name,
+                                              output={"verified": len(verification), "mismatches": len(mismatches)})
         return {
             "status": "rates_matched",
             "verification": verification,
@@ -334,10 +296,8 @@ async def specialist_review(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "specialist_review"
     log = logger.bind(run_id=run_id, node=node_name)
-
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"mismatches_count": len(state.get("mismatches", []))})
-
     try:
         if not state.get("mismatches"):
             log.info("No mismatches, skipping specialist review")
@@ -352,7 +312,9 @@ async def specialist_review(state: DocumentState) -> DocumentState:
             "mismatches": state["mismatches"],
             "allowed_actions": ["approve", "correct", "reject"],
         }
-        interrupt_id = f"specialist_{run_id}"
+
+        # ИСПРАВЛЕНИЕ Б-03: генерация UUID вместо строки
+        interrupt_id = str(uuid.uuid4())
 
         # HITL-события для SSE и Langfuse
         await event_bus.publish_hitl_interrupt(thread_id, run_id, interrupt_id, form_data)
@@ -361,20 +323,16 @@ async def specialist_review(state: DocumentState) -> DocumentState:
             name="hitl_interrupt",
             input_data={"form_id": "specialist_verification", "mismatches_count": len(state["mismatches"])},
         )
-
         log.info("Pausing for specialist review")
         decision = interrupt(form_data)
-
         await event_bus.publish_hitl_resumed(thread_id, run_id, interrupt_id, decision)
         langfuse_client.create_event(
             trace=_active_traces.get(run_id),
             name="hitl_resumed",
             output_data={"decision": decision},
         )
-
         _end_span(state, node_name, output_data={"decision": decision})
         await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"decision": decision})
-
         log.info("Specialist decision received", approved=decision.get("approved"))
         return {"status": "specialist_reviewed", "specialist_decision": decision}
     except Exception as e:
@@ -390,20 +348,15 @@ async def generate_output(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "generate_output"
     log = logger.bind(run_id=run_id, node=node_name)
-
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"positions_count": len(state.get("positions", []))})
-
     try:
         log.info("Generating output template in sandbox")
-
         settings = get_settings()
         sandbox = SandboxClient(settings)
-
         final_positions = _apply_specialist_corrections(
             state["positions"], state.get("specialist_decision", {})
         )
-
         result = await sandbox.execute_tool(
             image="factory/toolset-excel:1.0.0",
             cmd=["python", "/app/tools/generate_sap_template.py"],
@@ -416,7 +369,6 @@ async def generate_output(state: DocumentState) -> DocumentState:
                 }),
             },
         )
-
         if not result.success:
             log.error("Sandbox generation failed", stderr=result.stderr)
             _end_span(state, node_name, output_data={"error": result.error_message}, status="error")
@@ -425,7 +377,6 @@ async def generate_output(state: DocumentState) -> DocumentState:
                 "status": "failed",
                 "messages": [{"role": "error", "content": result.error_message}],
             }
-
         output_bytes = result.artifacts.get("output.xlsx", b"")
         output_key = f"runs/{state['run_id']}/final_act.xlsx"
         await s3_client.upload_file(
@@ -434,12 +385,10 @@ async def generate_output(state: DocumentState) -> DocumentState:
             file_content=output_bytes,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
         log.info("Output generated", key=output_key, size=len(output_bytes))
-
         _end_span(state, node_name, output_data={"artifact_key": output_key, "size": len(output_bytes)})
-        await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"artifact_key": output_key, "size": len(output_bytes)})
-
+        await event_bus.publish_node_finished(thread_id, run_id, node_name,
+                                              output={"artifact_key": output_key, "size": len(output_bytes)})
         return {
             "status": "output_generated",
             "output_artifact_key": output_key,
@@ -453,7 +402,7 @@ async def generate_output(state: DocumentState) -> DocumentState:
 
 
 def _apply_specialist_corrections(
-    positions: List[Dict[str, Any]], decision: Dict[str, Any]
+        positions: List[Dict[str, Any]], decision: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
     """Применяет корректировки специалиста к позициям."""
     if not decision.get("corrections"):
@@ -476,10 +425,8 @@ async def approver_sign(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "approver_sign"
     log = logger.bind(run_id=run_id, node=node_name)
-
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name, input_data={"output_artifact": state.get("output_artifact_key")})
-
     try:
         form_data = {
             "type": "hitl_form",
@@ -489,7 +436,9 @@ async def approver_sign(state: DocumentState) -> DocumentState:
             "summary": _build_summary(state),
             "allowed_actions": ["sign", "reject"],
         }
-        interrupt_id = f"approver_{run_id}"
+
+        # ИСПРАВЛЕНИЕ Б-03: генерация UUID вместо строки
+        interrupt_id = str(uuid.uuid4())
 
         await event_bus.publish_hitl_interrupt(thread_id, run_id, interrupt_id, form_data)
         langfuse_client.create_event(
@@ -497,21 +446,16 @@ async def approver_sign(state: DocumentState) -> DocumentState:
             name="hitl_interrupt",
             input_data={"form_id": "approver_sign"},
         )
-
         decision = interrupt(form_data)
-
         await event_bus.publish_hitl_resumed(thread_id, run_id, interrupt_id, decision)
         langfuse_client.create_event(
             trace=_active_traces.get(run_id),
             name="hitl_resumed",
             output_data={"decision": decision},
         )
-
         log.info("Approver decision", signed=decision.get("signed"))
-
         _end_span(state, node_name, output_data={"signed": decision.get("signed")})
         await event_bus.publish_node_finished(thread_id, run_id, node_name, output={"signed": decision.get("signed")})
-
         return {
             "status": "approved" if decision.get("signed") else "rejected",
             "approver_decision": decision,
@@ -537,14 +481,11 @@ async def finalize(state: DocumentState) -> DocumentState:
     thread_id = state["thread_id"]
     node_name = "finalize"
     log = logger.bind(run_id=run_id, node=node_name)
-
     await event_bus.publish_node_started(thread_id, run_id, node_name)
     _start_span(state, node_name)
-
     try:
         status = state["status"]
         log.info("Finalizing run", status=status)
-
         if status in ("approved", "auto_approved"):
             await event_bus.publish_run_finished(thread_id, run_id, state)
         elif status in ("failed", "rejected"):
@@ -552,12 +493,9 @@ async def finalize(state: DocumentState) -> DocumentState:
                 thread_id, run_id,
                 error_message=f"Run finished with status: {status}",
             )
-
         _end_span(state, node_name, output_data={"status": status})
         _finalize_trace(state)
-
         await event_bus.publish_node_finished(thread_id, run_id, node_name)
-
         return {
             "messages": [{"role": "system", "content": f"Ран завершён: {status}"}],
         }
@@ -571,8 +509,6 @@ async def finalize(state: DocumentState) -> DocumentState:
 # ==============================================================================
 # УСЛОВНЫЕ РЁБРА
 # ==============================================================================
-
-
 def route_after_review(state: DocumentState) -> Literal["generate_output", "finalize"]:
     """После проверки специалиста: продолжать или отклонить."""
     if state.get("specialist_decision", {}).get("approved"):
@@ -588,8 +524,6 @@ def route_after_approve(state: DocumentState) -> Literal["finalize"]:
 # ==============================================================================
 # СБОРКА И РЕГИСТРАЦИЯ ГРАФА
 # ==============================================================================
-
-
 def build_document_processing_graph() -> StateGraph:
     """Сборка графа обработки ПЗД."""
     graph = StateGraph(DocumentState)

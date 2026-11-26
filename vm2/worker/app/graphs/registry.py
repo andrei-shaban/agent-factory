@@ -4,11 +4,11 @@ Graph Registry — Реестр и оркестратор графов LangGraph
 Production Blueprint v5.2 — ВМ №2
 
 Назначение:
-  - Регистрация графов (StateGraph) по имени.
-  - Компиляция графа с PostgresSaver (чекпоинты в PostgreSQL).
-  - Запуск графа с поддержкой checkpoint'ов.
-  - Обработка HITL-пауз (interrupt) и resume.
-  - Интеграция с Langfuse для трейсинга (опционально, на уровне вызывающего кода).
+    Регистрация графов (StateGraph) по имени.
+    Компиляция графа с PostgresSaver (чекпоинты в PostgreSQL).
+    Запуск графа с поддержкой checkpoint'ов.
+    Обработка HITL-пауз (interrupt) и resume через Command(resume=...).
+    Интеграция с Langfuse для трейсинга (опционально, на уровне вызывающего кода).
 """
 import uuid
 from typing import Any, Dict, Optional
@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 import structlog
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import StateGraph
+from langgraph.types import Command
 from psycopg_pool import AsyncConnectionPool
 
 from worker.app.settings import Settings, get_settings
@@ -33,9 +34,9 @@ def _normalize_pg_url(url: str) -> str:
         url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
     elif url.startswith("postgresql+ssl://"):
         url = url.replace("postgresql+ssl://", "postgresql://", 1)
-        if "sslmode=" not in url:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}sslmode=require"
+    if "sslmode=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode=require"
     return url
 
 
@@ -55,7 +56,6 @@ class GraphRegistry:
     # ==========================================================================
     # РЕГИСТРАЦИЯ ГРАФОВ
     # ==========================================================================
-
     def register(self, name: str, graph: StateGraph) -> None:
         """
         Регистрация StateGraph.
@@ -75,7 +75,6 @@ class GraphRegistry:
     # ==========================================================================
     # CHECKPOINTER (PostgreSQL)
     # ==========================================================================
-
     async def init_checkpointer(self) -> None:
         """
         Инициализация пула соединений и AsyncPostgresSaver.
@@ -87,7 +86,10 @@ class GraphRegistry:
             return
 
         conninfo = _normalize_pg_url(self.settings.postgres_runtime_url)
-        logger.info("Initializing PostgresSaver", url=conninfo.split("@")[-1] if "@" in conninfo else conninfo)
+        logger.info(
+            "Initializing PostgresSaver",
+            url=conninfo.split("@")[-1] if "@" in conninfo else conninfo,
+        )
 
         self._pool = AsyncConnectionPool(
             conninfo=conninfo,
@@ -100,7 +102,6 @@ class GraphRegistry:
             },
         )
         await self._pool.open()
-
         self._checkpointer = AsyncPostgresSaver(self._pool)
         await self._checkpointer.setup()
         logger.info("PostgresSaver initialized and schema ready")
@@ -116,7 +117,6 @@ class GraphRegistry:
     # ==========================================================================
     # ЗАПУСК ГРАФА
     # ==========================================================================
-
     async def run(
         self,
         graph_name: str,
@@ -140,7 +140,6 @@ class GraphRegistry:
         log = logger.bind(run_id=run_id, thread_id=thread_id, graph=graph_name)
         log.info("Starting graph execution")
 
-        # Компиляция графа с checkpointer'ом
         compiled = graph.compile(checkpointer=self._checkpointer)
         config = {"configurable": {"thread_id": thread_id}}
 
@@ -156,7 +155,6 @@ class GraphRegistry:
     # ==========================================================================
     # RESUME ПОСЛЕ HITL
     # ==========================================================================
-
     async def resume(
         self,
         graph_name: str,
@@ -167,7 +165,11 @@ class GraphRegistry:
         """
         Возобновление графа после HITL-паузы.
         LangGraph восстанавливает состояние из checkpoint'а по thread_id
-        и передаёт human_response в точку прерывания.
+        и передаёт human_response в точку прерывания через Command(resume=...).
+
+        Это единственный корректный способ резюмирования после interrupt()
+        согласно официальной документации LangGraph: сырой словарь как input
+        не является резюмом и приводит к реплею узла с начала.
         """
         graph = self.get(graph_name)
         if graph is None:
@@ -184,9 +186,9 @@ class GraphRegistry:
         config = {"configurable": {"thread_id": thread_id}}
 
         try:
-            # LangGraph resume: передаём human_response как новый input
-            # граф восстановит состояние из checkpoint и продолжит выполнение
-            final_state = await compiled.ainvoke(human_response, config)
+            final_state = await compiled.ainvoke(
+                Command(resume=human_response), config
+            )
             status = final_state.get("status", "unknown")
             log.info("Graph resumed successfully", status=status)
             return final_state
@@ -195,5 +197,4 @@ class GraphRegistry:
             raise
 
 
-# Глобальный экземпляр реестра (singleton)
 graph_registry = GraphRegistry()
