@@ -39,7 +39,7 @@ services:
   # Worker подключается к Redis по TLS (rediss://) через Docker-сеть.
   # ============================================================================
   worker:
-    image: factory/gateway:latest
+    image: factory/gateway:1.0.0
     container_name: vm2-worker
     restart: unless-stopped
     entrypoint: ["taskiq", "worker", "worker.app.broker:broker", "--fs-discover", "worker.app.tasks"]
