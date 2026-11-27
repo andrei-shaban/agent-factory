@@ -20,7 +20,7 @@
 # Состав контекста ограничен файлом ./.dockerignore (секреты исключены).
 #
 # Команда сборки (из корня vm1/):
-#   docker build -f gateway/Dockerfile -t factory/gateway:latest .
+#   docker build -f gateway/Dockerfile -t factory/gateway:1.0.0 .
 #
 # ------------------------------------------------------------------------------
 # ФИКСАЦИЯ БАЗОВОГО ОБРАЗА (Blueprint §5.1)
@@ -35,7 +35,7 @@
 #   docker build -f gateway/Dockerfile \
 #     --build-arg BASE_IMAGE=python:3.14-slim@sha256:<digest-из-зеркала> \
 #     --build-arg PIP_INDEX_URL=http://vm1-pypiserver:8080/simple/ \
-#     -t factory/gateway:latest .
+#     -t factory/gateway:1.0.0 .
 #
 # ------------------------------------------------------------------------------
 # КЭШИРОВАНИЕ
