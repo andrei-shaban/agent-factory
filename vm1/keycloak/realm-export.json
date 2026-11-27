@@ -72,7 +72,13 @@
         "composite": true,
         "clientRole": false,
         "composites": {
-          "realm": ["factory-user", "factory-specialist", "factory-owner", "factory-approver", "factory-auditor"]
+          "realm": [
+            "factory-user",
+            "factory-specialist",
+            "factory-owner",
+            "factory-approver",
+            "factory-auditor"
+          ]
         }
       }
     ]
@@ -133,7 +139,7 @@
     {
       "clientId": "factory-spa",
       "name": "Factory SPA (oauth2-proxy)",
-      "description": "OIDC-клиент для oauth2-proxy на ВМ №1",
+      "description": "OIDC-клиент для oauth2-proxy на ВМ №1 (оба домена: factory и langfuse)",
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
       "secret": "${OAUTH2_PROXY_CLIENT_SECRET}",
@@ -149,9 +155,9 @@
       "baseUrl": "/",
       "adminUrl": "/",
       "redirectUris": [
-        "https://factory.corp.example.com/*",
+        "https://factory.corp.example.com/",
         "https://factory.corp.example.com/oauth2/callback",
-        "https://langfuse.corp.example.com/*",
+        "https://langfuse.corp.example.com/",
         "https://langfuse.corp.example.com/oauth2/callback"
       ],
       "webOrigins": [
@@ -159,19 +165,11 @@
         "https://langfuse.corp.example.com"
       ],
       "defaultClientScopes": [
-        "web-origins",
-        "acr",
         "profile",
-        "roles",
         "email",
         "groups"
       ],
-      "optionalClientScopes": [
-        "address",
-        "phone",
-        "offline_access",
-        "microprofile-jwt"
-      ],
+      "optionalClientScopes": [],
       "attributes": {
         "access.token.lifespan": "3600",
         "backchannel.logout.session.required": "true",
@@ -201,7 +199,7 @@
           "protocolMapper": "oidc-group-membership-mapper",
           "consentRequired": false,
           "config": {
-            "full.path": "true",
+            "full.path": "false",
             "id.token.claim": "true",
             "access.token.claim": "true",
             "claim.name": "groups",
@@ -222,7 +220,7 @@
             "jsonType.label": "String"
           }
         },
-        {
+                {
           "name": "client-id-mapper",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-usersessionmodel-note-mapper",
@@ -232,6 +230,100 @@
             "id.token.claim": "true",
             "access.token.claim": "true",
             "claim.name": "clientId",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "factory-spa-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "factory-spa",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ],
+      "authorizationServicesEnabled": false
+    },
+    {
+      "clientId": "langfuse-ui",
+      "name": "Langfuse UI (OIDC federation)",
+      "description": "OIDC-клиент для Langfuse UI на ВМ №1 (F2). Используется самим Langfuse через NextAuth AUTH_CUSTOM_*.",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${AUTH_KEYCLOAK_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "consentRequired": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "rootUrl": "https://langfuse.corp.example.com",
+      "baseUrl": "/",
+      "adminUrl": "/",
+      "redirectUris": [
+        "https://langfuse.corp.example.com/api/auth/callback/keycloak"
+      ],
+      "webOrigins": [
+        "https://langfuse.corp.example.com"
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "groups"
+      ],
+      "optionalClientScopes": [],
+      "attributes": {
+        "access.token.lifespan": "3600",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "client_credentials.use_refresh_token": "false",
+        "exclude.session.state.from.auth.response": "false",
+        "frontchannel.logout.session.required": "true",
+        "frontchannel.logout.url": "",
+        "id.token.as.detached.signature": "false",
+        "login_theme": "keycloak",
+        "oidc.ciba.grant.enabled": "false",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "post.logout.redirect.uris": "https://langfuse.corp.example.com/*",
+        "saml.assertion.signature": "false",
+        "saml.client.signature": "false",
+        "saml.encrypt": "false",
+        "saml.force.post.binding": "false",
+        "saml.server.signature": "false",
+        "saml_server_signature": "false",
+        "token.response.type.bearer.lower-case": "false",
+        "use.refresh.tokens": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-roles-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_roles",
             "jsonType.label": "String"
           }
         }
@@ -251,7 +343,7 @@
     },
     {
       "name": "profile",
-      "description": "Базовый профиль пользователя",
+      "description": "Базовый профиль пользователя (имя)",
       "protocol": "openid-connect",
       "attributes": {
         "include.in.token.scope": "true",
@@ -272,7 +364,19 @@
             "claim.name": "preferred_username",
             "jsonType.label": "String"
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "description": "Email пользователя",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "${emailScopeConsentText}"
+      },
+      "protocolMappers": [
         {
           "name": "email",
           "protocol": "openid-connect",
@@ -285,6 +389,20 @@
             "access.token.claim": "true",
             "claim.name": "email",
             "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email verified",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "emailVerified",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email_verified",
+            "jsonType.label": "boolean"
           }
         }
       ]

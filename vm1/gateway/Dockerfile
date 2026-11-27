@@ -176,8 +176,12 @@ COPY --link gateway/app/ ./app/
 # Создание непривилегированного пользователя
 # ------------------------------------------------------------------------------
 # UID 10001 — стандартный диапазон для service accounts
+# D6: точки монтирования именованных томов (wheel-cache, worker-tmp) создаются
+# в образе и получают владельца factory — иначе Docker создаёт их от root,
+# и непривилегированный процесс не может в них писать.
 RUN groupadd --system --gid 10001 factory \
     && useradd --system --uid 10001 --gid factory --home /app --shell /bin/false factory \
+    && mkdir -p /app/wheel-cache /app/tmp \
     && chown -R factory:factory /app
 
 USER factory:factory

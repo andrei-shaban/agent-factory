@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
-WHEEL_CACHE_DIR="${SCRIPT_DIR}/wheel-cache"
 
 log() { printf '[%s] %s\n' "$1" "$2"; }
 
@@ -28,6 +27,27 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# ==============================================================================
+# E3/E6: Создание хостовых каталогов для bind-mount
+# ==============================================================================
+WHEEL_CACHE_DIR="${WHEEL_CACHE_HOST_PATH:-/srv/factory/wheel-cache}"
+RUNS_DIR="${SANDBOX_RUNS_HOST_PATH:-/srv/factory/runs}"
+
+log INFO "Creating host directories for bind-mount..."
+mkdir -p "$WHEEL_CACHE_DIR" "$RUNS_DIR"
+
+# Владелец: uid 10001 (factory) — пользователь воркера
+if [[ -n "${SUDO_USER:-}" ]]; then
+    chown -R 10001:10001 "$WHEEL_CACHE_DIR" "$RUNS_DIR"
+    chmod -R 755 "$WHEEL_CACHE_DIR" "$RUNS_DIR"
+    log INFO "Directories created with owner 10001 (factory): ${WHEEL_CACHE_DIR}, ${RUNS_DIR}"
+else
+    log WARN "Not running as sudo; ensure ${WHEEL_CACHE_DIR} and ${RUNS_DIR} are owned by uid 10001"
+fi
+
+# ==============================================================================
+# Проверка готовности sandbox-демона
+# ==============================================================================
 sandbox_ready=false
 if [[ -n "${SANDBOX_DOCKER_SOCKET:-}" && -S "${SANDBOX_DOCKER_SOCKET}" ]]; then
     if runtimes=$(DOCKER_HOST="unix://${SANDBOX_DOCKER_SOCKET}" docker info --format '{{json .Runtimes}}' 2>/dev/null) && [[ "$runtimes" == *'runsc'* ]]; then
@@ -40,11 +60,8 @@ else
     log WARN "Dedicated rootless sandbox socket is unavailable; the main Docker daemon will not be used."
 fi
 
-mkdir -p "$WHEEL_CACHE_DIR"
-if [[ -n "${SUDO_USER:-}" ]]; then
-    chown -R "$SUDO_USER:$SUDO_USER" "$WHEEL_CACHE_DIR"
-fi
-
 if [[ "$sandbox_ready" != true ]]; then
     log WARN "Regular Compose services may run, but sandbox execution remains blocked until a dedicated rootless dockerd with runsc is configured."
 fi
+
+log INFO "Host setup completed."

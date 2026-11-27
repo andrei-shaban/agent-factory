@@ -2,30 +2,30 @@
 # ==============================================================================
 # vm2/sandbox/entrypoint.sh
 # entrypoint.sh — Точка входа для песочниц gVisor (ВМ №2)
-# Production Blueprint v5.2
-# ==============================================================================
-# Назначение: Безопасный запуск кода инструмента (tool), переданного Воркером.
-#
-# Особенности:
-#   - Использует 'exec "$@"' для замены процесса оболочки на целевой процесс.
-#     Это критично для корректной передачи сигналов (SIGTERM/SIGINT) от Docker
-#     (при остановке контейнера по таймауту или отмене задачи) непосредственно
-#     в процесс инструмента, позволяя ему завершиться корректно.
-#   - Минимализм: никаких лишних действий, чтобы не увеличивать attack surface.
-#   - Работает от имени непривилегированного пользователя 'sandbox' (UID 10000).
+# Production Blueprint v5.3.1
 # ==============================================================================
 
 set -e
 
-# Явно указываем временную директорию, так как корневая ФС контейнера read-only.
-# Воркер монтирует --tmpfs /tmp при создании контейнера через Docker Socket Proxy.
 export TMPDIR=/tmp
-
-# Запрет генерации .pyc файлов внутри read-only ФС
 export PYTHONDONTWRITEBYTECODE=1
 
-# Передача управления целевой команде, переданной через CMD/аргументы docker run.
-# Пример вызова от Воркера:
-#   docker run --rm ... factory/toolset-excel python /app/tools/calculate.py --input data.json
-# Здесь $@ раскроется в: python /app/tools/calculate.py --input data.json
+# ==============================================================================
+# E8: Установка динамических зависимостей из wheel-cache
+# ==============================================================================
+# Если в образе есть requirements-runtime.txt, устанавливаем зависимости
+# на tmpfs /app/vendor перед запуском инструмента.
+if [ -f /app/tools/requirements-runtime.txt ]; then
+    echo "Installing runtime dependencies from wheel-cache..."
+    pip install \
+        --no-index \
+        --find-links=/app/wheel-cache \
+        --target=/tmp/vendor \
+        --require-hashes \
+        -r /app/tools/requirements-runtime.txt
+
+    export PYTHONPATH=/tmp/vendor
+fi
+
+# Передача управления целевой команде
 exec "$@"

@@ -59,25 +59,10 @@ jsonschema==4.20.0
 # Используется для: обработки CSV и текстовых файлов от подрядчиков
 chardet==5.2.0
 
-# ==============================================================================
-# ПРИМЕЧАНИЯ ПО ИСПОЛЬЗОВАНИЮ
-# ==============================================================================
-# 1. Этот файл используется по умолчанию в Dockerfile.toolset:
-#    docker build -t factory/toolset-base:1.0.0 -f sandbox/Dockerfile.toolset .
-#
-# 2. Для специфичных toolset создаются отдельные файлы:
-#    - requirements-pdf.txt (для toolset-pdf: добавляет pdfplumber, PyMuPDF)
-#    - requirements-excel.txt (для toolset-excel: добавляет xlsxwriter, openpyxl)
-#    - requirements-calc.txt (для toolset-calc: добавляет numpy, scipy)
-#
-# 3. Сборка специфичного toolset:
-#    docker build --build-arg TOOLSET_REQS=requirements-excel.txt \
-#      -t factory/toolset-excel:1.0.0 -f sandbox/Dockerfile.toolset .
-#
-# 4. Все пакеты должны быть в wheel-cache на ВМ №2:
-#    /app/wheel-cache/pandas-2.1.4-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-#    /app/wheel-cache/openpyxl-3.1.2-py2.py3-none-any.whl
-#    ...
-#
-# 5. Если пакета нет в кэше, сборка упадёт с ошибкой:
-#    ERROR: Could not find a version that satisfies the requirement pandas==2.1.4
+# Базовые зависимости для toolset-excel (запекаются в образ)
+pandas==2.1.4
+openpyxl==3.1.2
+xlrd==2.0.1
+python-dateutil==2.8.2
+jsonschema==4.20.0
+chardet==5.2.0
