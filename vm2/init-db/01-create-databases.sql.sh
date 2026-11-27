@@ -52,6 +52,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "factory" <<-EOSQL
     \$\$;
     GRANT CONNECT ON DATABASE factory TO ${WORKER_DB_USER};
     GRANT USAGE ON SCHEMA public TO ${WORKER_DB_USER};
+    -- D2: PostgresSaver.setup() создаёт таблицы чекпоинтов под ролью Worker
+    GRANT CREATE ON SCHEMA public TO ${WORKER_DB_USER};
     GRANT ALL ON ALL TABLES IN SCHEMA public TO ${WORKER_DB_USER};
     GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${WORKER_DB_USER};
 EOSQL
@@ -136,6 +138,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "factory" <<-EOSQL
 
     GRANT ALL ON thread_locks TO ${WORKER_DB_USER};
     GRANT ALL ON thread_locks TO ${FACTORY_DB_USER};
+    -- C2: Gateway управляет lease (INSERT/DELETE) и читает статус блокировки
+    GRANT SELECT, INSERT, DELETE ON thread_locks TO ${GATEWAY_DB_USER};
 EOSQL
 
 echo "Таблица thread_locks готова."
@@ -160,7 +164,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "factory" <<-EOSQL
 
     GRANT ALL ON interrupt_decisions TO ${WORKER_DB_USER};
     GRANT ALL ON interrupt_decisions TO ${FACTORY_DB_USER};
-    -- Gateway не пишет в interrupt_decisions (это делает Worker после resume)
+    -- C2: Gateway фиксирует HITL-решение (дедуп по UNIQUE(run_id, interrupt_id)); Worker читает при resume
+    GRANT SELECT, INSERT, DELETE ON interrupt_decisions TO ${GATEWAY_DB_USER};
 EOSQL
 
 echo "Таблица interrupt_decisions готова."
