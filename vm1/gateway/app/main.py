@@ -239,7 +239,7 @@ async def _free_stale_lock(conn, thread_id: str) -> None:
     """Освобождает thread_locks, у которых heartbeat не приходил > TTL."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "DELETE FROM thread_locks WHERE thread_id = %s AND locked_at < NOW() - INTERVAL '%s minutes'",
+            "DELETE FROM thread_locks WHERE thread_id = %s AND locked_at < NOW() - make_interval(mins => %s)",
             (thread_id, settings.stale_lock_ttl_minutes),
         )
 
