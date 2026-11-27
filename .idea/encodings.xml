@@ -3,7 +3,7 @@
   <component name="Encoding">
     <file url="file://$PROJECT_DIR$/Scripts/scan-project.ps1" charset="windows-1251" />
     <file url="file://$PROJECT_DIR$/vm1/.env" charset="UTF-8" />
-    <file url="file://$PROJECT_DIR$/vm1/.env.example" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/vm1/.env.example" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/vm1/gateway/requirements_up.txt" charset="windows-1251" />
     <file url="file://$PROJECT_DIR$/vm1/generate-env.ps1" charset="windows-1251" />
   </component>
